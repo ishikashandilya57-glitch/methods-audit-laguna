@@ -3,6 +3,7 @@ import { auditsAPI, operatorUploadsAPI, roadmapAPI } from '../services/api';
 import { useAuth } from '../hooks/useAuth';
 import { operationSections } from '../data/operationData';
 import { createInitialRoadmapRows, roadmapMonthKeys } from '../data/roadmapData';
+import { Link } from 'react-router-dom';
 
 const formatDate = (value) => {
   if (!value) return '—';
@@ -70,6 +71,9 @@ const describeArc = (x, y, radius, startAngle, endAngle) => {
 const DashboardPieChart = ({ data }) => {
   const total = data.reduce((sum, item) => sum + item.count, 0);
   let currentAngle = 0;
+  const centerX = 360;
+  const centerY = 190;
+  const radius = 102;
 
   if (!total) {
     return <div className="dashboard-pie-empty">No reason data</div>;
@@ -77,22 +81,33 @@ const DashboardPieChart = ({ data }) => {
 
   return (
     <div className="dashboard-pie-wrap">
-      <svg viewBox="0 0 680 340" className="dashboard-pie-chart" role="img" aria-label="Reason distribution pie chart">
+      <svg viewBox="0 0 820 380" className="dashboard-pie-chart" role="img" aria-label="Reason distribution pie chart">
+        <defs>
+          <marker
+            id="dashboard-pie-arrow"
+            markerWidth="10"
+            markerHeight="10"
+            refX="8"
+            refY="5"
+            orient="auto"
+            markerUnits="strokeWidth"
+          >
+            <path d="M 0 0 L 10 5 L 0 10 z" fill="#8c96a8" />
+          </marker>
+        </defs>
         {data.map((item) => {
-          const centerX = 300;
-          const centerY = 170;
           const startAngle = currentAngle;
           const sliceAngle = (item.count / total) * 360;
           const endAngle = currentAngle + sliceAngle;
-          const path = describeArc(centerX, centerY, 102, startAngle, endAngle);
+          const path = describeArc(centerX, centerY, radius, startAngle, endAngle);
           const midAngle = startAngle + (sliceAngle / 2);
-          const innerPoint = polarToCartesian(centerX, centerY, 114, midAngle);
-          const outerPoint = polarToCartesian(centerX, centerY, 150, midAngle);
-          const labelX = outerPoint.x >= centerX
-            ? outerPoint.x + 44
-            : Math.max(180, outerPoint.x - 44);
+          const innerPoint = polarToCartesian(centerX, centerY, 118, midAngle);
+          const outerPoint = polarToCartesian(centerX, centerY, 156, midAngle);
+          const isRightSide = outerPoint.x >= centerX;
+          const labelX = isRightSide ? 640 : 180;
           const labelY = outerPoint.y;
-          const textAnchor = outerPoint.x >= centerX ? 'start' : 'end';
+          const elbowX = isRightSide ? labelX - 44 : labelX + 44;
+          const textAnchor = isRightSide ? 'start' : 'end';
           const slice = (
             <g key={item.label}>
               <path
@@ -102,8 +117,9 @@ const DashboardPieChart = ({ data }) => {
                 strokeWidth="2"
               />
               <path
-                d={`M ${innerPoint.x} ${innerPoint.y} L ${outerPoint.x} ${outerPoint.y} L ${labelX} ${labelY}`}
+                d={`M ${labelX} ${labelY} L ${elbowX} ${labelY} L ${outerPoint.x} ${outerPoint.y} L ${innerPoint.x} ${innerPoint.y}`}
                 className="dashboard-pie-callout"
+                markerEnd="url(#dashboard-pie-arrow)"
               />
               <circle cx={labelX} cy={labelY} r="3" fill={item.color} />
               <text
@@ -127,19 +143,48 @@ const DashboardPieChart = ({ data }) => {
           currentAngle = endAngle;
           return slice;
         })}
-        <circle cx="300" cy="170" r="56" fill="#ffffff" />
-        <text x="300" y="162" textAnchor="middle" className="dashboard-pie-total">{total}</text>
-        <text x="300" y="186" textAnchor="middle" className="dashboard-pie-caption">No Reasons</text>
+        <circle cx={centerX} cy={centerY} r="56" fill="#ffffff" />
+        <text x={centerX} y={centerY - 8} textAnchor="middle" className="dashboard-pie-total">{total}</text>
+        <text x={centerX} y={centerY + 16} textAnchor="middle" className="dashboard-pie-caption">No Reasons</text>
       </svg>
     </div>
   );
 };
 
-const DashboardMetricCard = ({ accent, label, value, hint, tone }) => (
+const MetricIcon = ({ type }) => {
+  if (type === 'audits') {
+    return (
+      <svg viewBox="0 0 24 24" className="dashboard-metric-icon" aria-hidden="true">
+        <path d="M7 4.75h10a2.25 2.25 0 0 1 2.25 2.25v10A2.25 2.25 0 0 1 17 19.25H7A2.25 2.25 0 0 1 4.75 17V7A2.25 2.25 0 0 1 7 4.75Z" fill="none" stroke="currentColor" strokeWidth="1.7" />
+        <path d="M8 9h8M8 12h5M8 15h8" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
+      </svg>
+    );
+  }
+
+  if (type === 'lines') {
+    return (
+      <svg viewBox="0 0 24 24" className="dashboard-metric-icon" aria-hidden="true">
+        <path d="M5 18.25V5.75M12 18.25V9.5M19 18.25V12.25" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
+        <circle cx="5" cy="5.75" r="1.4" fill="currentColor" />
+        <circle cx="12" cy="9.5" r="1.4" fill="currentColor" />
+        <circle cx="19" cy="12.25" r="1.4" fill="currentColor" />
+      </svg>
+    );
+  }
+
+  return (
+    <svg viewBox="0 0 24 24" className="dashboard-metric-icon" aria-hidden="true">
+      <path d="M6.75 12.25 10.1 15.6 17.25 8.4" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+      <circle cx="12" cy="12" r="8.25" fill="none" stroke="currentColor" strokeWidth="1.7" />
+    </svg>
+  );
+};
+
+const DashboardMetricCard = ({ icon, label, value, hint, tone }) => (
   <div className={`dashboard-metric-card${tone ? ` ${tone}` : ''}`}>
     <div className="dashboard-metric-head">
       <div className="dashboard-metric-label">{label}</div>
-      <span className="dashboard-metric-accent">{accent}</span>
+      <span className="dashboard-metric-accent"><MetricIcon type={icon} /></span>
     </div>
     <div className="dashboard-metric-body">
       <div className="dashboard-metric-value">{value}</div>
@@ -237,6 +282,11 @@ export default function DashboardPage() {
     completed: audits.filter((audit) => audit.status === 'completed').length,
   }), [audits]);
 
+  const auditSheetCounts = useMemo(() => ({
+    total: filteredUploads.length,
+    rows: dashboardRows.length,
+  }), [dashboardRows.length, filteredUploads.length]);
+
   const sectionSummary = useMemo(() => (
     Object.values(dashboardRows.reduce((summary, row) => {
       const key = row.section || 'Unassigned';
@@ -313,7 +363,7 @@ export default function DashboardPage() {
       return summary;
     }, {});
 
-    const palette = ['#b91c1c', '#ef4444', '#f59e0b', '#0f766e', '#2563eb', '#6d28d9', '#525252'];
+    const palette = ['#0f766e', '#14b8a6', '#2563eb', '#38bdf8', '#22c55e', '#84cc16', '#64748b'];
 
     return Object.entries(reasonCounts)
       .sort(([, a], [, b]) => b - a)
@@ -324,7 +374,40 @@ export default function DashboardPage() {
       }));
   }, [dashboardRows]);
 
+  const lineRemarksSummary = useMemo(() => {
+    const remarks = filteredUploads.flatMap((upload) => (
+      (upload.lineRemarks || [])
+        .filter((item) => item.line || item.remark)
+        .map((item) => ({
+          id: `${upload.id || upload._id}-${item.id}`,
+          line: item.line || '—',
+          remark: item.remark || '—',
+          importedAt: upload.importedAt,
+          week: upload.week?.label || '',
+          fileName: upload.fileName || '',
+        }))
+    ));
+
+    const linesCovered = new Set(remarks.map((item) => item.line).filter((line) => line && line !== '—')).size;
+
+    return {
+      total: remarks.length,
+      linesCovered,
+      remarks,
+    };
+  }, [filteredUploads]);
+
   const recentAudits = audits.slice(0, 5);
+
+  const getCoverageTone = (item) => {
+    const yesPercent = item.total ? item.yes / item.total : 0;
+    const pendingPercent = item.total ? item.pending / item.total : 0;
+
+    if (yesPercent >= 0.7 && pendingPercent <= 0.2) return 'good';
+    if (pendingPercent >= 0.6) return 'risk';
+    return 'mid';
+  };
+
   const roadmapImplementation = useMemo(() => {
     const total = roadmapRows.length;
     const completed = roadmapRows.filter((row) => row.status === 'COMPLETED').length;
@@ -394,21 +477,23 @@ export default function DashboardPage() {
 
           <div className="grid-3 dashboard-metric-grid">
             <DashboardMetricCard
-              accent="AU"
-              label="Audits Till Now"
-              value={auditCounts.total}
-              hint={`${auditCounts.completed} completed, ${auditCounts.inProgress} in progress`}
+              icon="audits"
+              label="Audit Sheets Till Now"
+              value={auditSheetCounts.total}
+              hint={auditSheetCounts.total
+                ? `${auditSheetCounts.rows} rows in selected period`
+                : `${auditCounts.total} audit records created`}
               tone="dashboard-tone-amber"
             />
             <DashboardMetricCard
-              accent="LN"
+              icon="lines"
               label="Lines Covered"
               value={lineSummary.length}
               hint={`${dashboardSections.length} sections in selected period`}
               tone="dashboard-tone-emerald"
             />
             <DashboardMetricCard
-              accent="MS"
+              icon="implementation"
               label="Method Std. Implementation"
               value={`${roadmapImplementation.percent}%`}
               hint={`${roadmapImplementation.completed}/${roadmapImplementation.total} completed, ${roadmapImplementation.inProgress} on going`}
@@ -513,6 +598,43 @@ export default function DashboardPage() {
 
           <div className="card dashboard-panel dashboard-panel-sky">
             <div className="dashboard-panel-head">
+              <h3>Line-wise Remarks</h3>
+              {lineRemarksSummary.total ? (
+                <span className="dashboard-panel-chip">{lineRemarksSummary.total} remarks</span>
+              ) : null}
+            </div>
+            {lineRemarksSummary.total ? (
+              <>
+                <div className="dashboard-remarks-summary">
+                  <span className="dashboard-panel-chip">{lineRemarksSummary.linesCovered} lines covered</span>
+                  {latestUpload ? <span className="dashboard-panel-chip">Latest {formatDate(latestUpload.importedAt)}</span> : null}
+                </div>
+                <table className="table">
+                  <thead>
+                    <tr>
+                      <th>Line</th>
+                      <th>Remark</th>
+                      <th>Date</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {lineRemarksSummary.remarks.map((item) => (
+                      <tr key={item.id}>
+                        <td>{item.line}</td>
+                        <td>{item.remark}</td>
+                        <td>{formatDate(item.importedAt)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </>
+            ) : (
+              <p className="dashboard-empty-copy">Line-wise remarks will appear here after adding them in the audits page.</p>
+            )}
+          </div>
+
+          <div className="card dashboard-panel dashboard-panel-sky">
+            <div className="dashboard-panel-head">
               <h3>Section Coverage</h3>
               {sectionSummary.length ? <span className="dashboard-panel-chip">{sectionSummary.length} sections</span> : null}
             </div>
@@ -532,9 +654,9 @@ export default function DashboardPage() {
                     <tr key={item.section}>
                       <td>{item.section}</td>
                       <td>{item.total}</td>
-                      <td>{item.yes}</td>
-                      <td>{item.no}</td>
-                      <td>{item.pending}</td>
+                      <td><span className={`dashboard-coverage-pill ${getCoverageTone(item) === 'good' ? 'is-good' : getCoverageTone(item) === 'mid' ? 'is-mid' : 'is-risk'}`}>{item.yes}</span></td>
+                      <td><span className="dashboard-coverage-pill is-neutral">{item.no}</span></td>
+                      <td><span className={`dashboard-coverage-pill ${getCoverageTone(item) === 'risk' ? 'is-risk' : getCoverageTone(item) === 'mid' ? 'is-mid' : 'is-good'}`}>{item.pending}</span></td>
                     </tr>
                   ))}
                 </tbody>
@@ -574,6 +696,9 @@ export default function DashboardPage() {
               <div className="dashboard-empty-state">
                 <strong>No audits yet</strong>
                 <span>Audit records will appear here once methods audits are created.</span>
+                <div>
+                  <Link to="/audits" className="btn btn-primary btn-sm">Go to Audits</Link>
+                </div>
               </div>
             )}
           </div>

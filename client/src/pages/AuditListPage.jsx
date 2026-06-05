@@ -87,15 +87,24 @@ const getWeekInfo = (isoString) => {
 export default function AuditListPage() {
   const [audits, setAudits] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [uploadDetailsLoading, setUploadDetailsLoading] = useState(false);
   const [uploadingOperators, setUploadingOperators] = useState(false);
+  const [uploadFileName, setUploadFileName] = useState('');
   const [uploadHistory, setUploadHistory] = useState([]);
+  const [uploadDetailsById, setUploadDetailsById] = useState({});
   const [selectedUploadDate, setSelectedUploadDate] = useState('');
   const [selectedWeekKey, setSelectedWeekKey] = useState('');
   const [activeLine, setActiveLine] = useState('All');
   const [activeSection, setActiveSection] = useState('All');
+  const [showAuditActions, setShowAuditActions] = useState(false);
   const [editingAuditStatusRows, setEditingAuditStatusRows] = useState({});
+  const [savingUploads, setSavingUploads] = useState({});
+  const [openPictureMenuRowId, setOpenPictureMenuRowId] = useState(null);
+  const [previewImage, setPreviewImage] = useState(null);
   const [filters, setFilters] = useState({ status: '', area: '' });
   const fileInputRef = useRef(null);
+  const uploadSaveTimersRef = useRef({});
+  const uploadPendingPayloadsRef = useRef({});
   const operationMatcher = useMemo(() => {
     const entries = operationData.map((item) => ({
       operationCode: String(item.operationCode || '').trim().toUpperCase(),
@@ -210,6 +219,18 @@ export default function AuditListPage() {
     history.map((upload) => ({
       ...upload,
       id: upload.id || upload._id,
+      rowCount: upload.rowCount || (upload.rows || []).length,
+      lineCount: upload.lineCount || new Set((upload.rows || []).map((row) => row.line).filter(Boolean)).size,
+      sectionCount: upload.sectionCount || new Set((upload.rows || []).map((row) => row.section).filter(Boolean)).size,
+      yesCount: upload.yesCount || (upload.rows || []).filter((row) => row.auditDone === 'Yes').length,
+      noCount: upload.noCount || (upload.rows || []).filter((row) => row.auditDone === 'No').length,
+      pendingCount: upload.pendingCount ?? Math.max((upload.rows || []).length - ((upload.yesCount || 0) + (upload.noCount || 0)), 0),
+      lineRemarks: (upload.lineRemarks || []).map((remark, index) => ({
+        id: remark.id || `line-remark-${index + 1}`,
+        line: remark.line || '',
+        remark: remark.remark || '',
+        status: remark.status || 'Pending',
+      })),
       rows: (upload.rows || []).map((row, index) => ({
         ...row,
         id: row.id || `audit-list-operator-row-${index + 1}`,
@@ -225,6 +246,24 @@ export default function AuditListPage() {
       })),
     }))
   );
+
+  const summarizeUpload = (upload) => {
+    const rows = upload.rows || [];
+    const yesCount = rows.filter((row) => row.auditDone === 'Yes').length;
+    const noCount = rows.filter((row) => row.auditDone === 'No').length;
+
+    return {
+      ...upload,
+      id: upload.id || upload._id,
+      rowCount: rows.length,
+      lineCount: new Set(rows.map((row) => row.line).filter(Boolean)).size,
+      sectionCount: new Set(rows.map((row) => row.section).filter(Boolean)).size,
+      yesCount,
+      noCount,
+      pendingCount: Math.max(rows.length - yesCount - noCount, 0),
+      lineRemarksCount: (upload.lineRemarks || []).length,
+    };
+  };
 
   const fetchAudits = () => {
     setLoading(true);
@@ -246,6 +285,10 @@ export default function AuditListPage() {
     fetchUploadHistory();
   }, [operationMatcher]);
 
+  useEffect(() => () => {
+    Object.values(uploadSaveTimersRef.current).forEach((timer) => clearTimeout(timer));
+  }, []);
+
   const visibleUploads = useMemo(() => (
     uploadHistory.filter((item) => {
       const matchesDate = selectedUploadDate ? toInputDate(item.importedAt) === selectedUploadDate : true;
@@ -255,12 +298,30 @@ export default function AuditListPage() {
   ), [uploadHistory, selectedUploadDate, selectedWeekKey]);
 
   const selectedImport = useMemo(() => visibleUploads[0] || null, [visibleUploads]);
+  const selectedImportDetails = selectedImport
+    ? uploadDetailsById[selectedImport.id] || (selectedImport.rows ? selectedImport : null)
+    : null;
 
   useEffect(() => {
     setActiveLine('All');
     setActiveSection('All');
     setEditingAuditStatusRows({});
-  }, [selectedImport]);
+    setShowAuditActions(false);
+    setOpenPictureMenuRowId(null);
+  }, [selectedImport?.id]);
+
+  useEffect(() => {
+    if (!selectedImport?.id || uploadDetailsById[selectedImport.id] || selectedImport.rows) return;
+
+    setUploadDetailsLoading(true);
+    operatorUploadsAPI.getOne(selectedImport.id)
+      .then(({ data }) => {
+        const [hydrated] = hydrateUploadHistory([data]);
+        setUploadDetailsById((current) => ({ ...current, [hydrated.id]: hydrated }));
+      })
+      .catch(() => toast.error('Failed to load uploaded sheet details'))
+      .finally(() => setUploadDetailsLoading(false));
+  }, [selectedImport?.id, uploadDetailsById]);
 
   const handleDelete = async (id) => {
     if (!window.confirm('Delete this audit?')) return;
@@ -277,6 +338,7 @@ export default function AuditListPage() {
     const file = event.target.files?.[0];
     if (!file) return;
 
+    setUploadFileName(file.name);
     setUploadingOperators(true);
 
     try {
@@ -314,7 +376,9 @@ export default function AuditListPage() {
       };
 
       const { data } = await operatorUploadsAPI.create(upload);
-      setUploadHistory((current) => hydrateUploadHistory([data, ...current]));
+      const [hydrated] = hydrateUploadHistory([data]);
+      setUploadHistory((current) => [summarizeUpload(hydrated), ...current]);
+      setUploadDetailsById((current) => ({ ...current, [hydrated.id]: hydrated }));
       setSelectedUploadDate('');
       setSelectedWeekKey('');
       toast.success(`Imported ${rows.length} operator rows`);
@@ -333,18 +397,32 @@ export default function AuditListPage() {
 
   const clearSelectedUpload = () => {
     if (!selectedImport) return;
+    if (uploadSaveTimersRef.current[selectedImport.id]) {
+      clearTimeout(uploadSaveTimersRef.current[selectedImport.id]);
+      delete uploadSaveTimersRef.current[selectedImport.id];
+      delete uploadPendingPayloadsRef.current[selectedImport.id];
+    }
     operatorUploadsAPI.delete(selectedImport._id || selectedImport.id)
       .then(() => {
         setUploadHistory((current) => current.filter((item) => item.id !== selectedImport.id));
+        setUploadDetailsById((current) => {
+          const next = { ...current };
+          delete next[selectedImport.id];
+          return next;
+        });
         toast.success('Selected uploaded sheet removed');
       })
       .catch(() => toast.error('Failed to remove selected sheet'));
   };
 
   const clearAllUploads = () => {
+    Object.values(uploadSaveTimersRef.current).forEach((timer) => clearTimeout(timer));
+    uploadSaveTimersRef.current = {};
+    uploadPendingPayloadsRef.current = {};
     operatorUploadsAPI.clearAll()
       .then(() => {
         setUploadHistory([]);
+        setUploadDetailsById({});
         setSelectedUploadDate('');
         setSelectedWeekKey('');
         toast.success('All uploaded sheets removed');
@@ -352,22 +430,65 @@ export default function AuditListPage() {
       .catch(() => toast.error('Failed to remove uploaded sheets'));
   };
 
+  const scheduleUploadSave = (upload) => {
+    const uploadId = upload.id;
+    if (!uploadId) return;
+
+    uploadPendingPayloadsRef.current[uploadId] = upload;
+    setSavingUploads((current) => ({ ...current, [uploadId]: true }));
+
+    if (uploadSaveTimersRef.current[uploadId]) {
+      clearTimeout(uploadSaveTimersRef.current[uploadId]);
+    }
+
+    uploadSaveTimersRef.current[uploadId] = setTimeout(async () => {
+      const payload = uploadPendingPayloadsRef.current[uploadId];
+
+      try {
+        await operatorUploadsAPI.update(payload._id || payload.id, payload);
+      } catch (error) {
+        toast.error(error.response?.data?.message || 'Failed to save audit changes');
+      } finally {
+        delete uploadSaveTimersRef.current[uploadId];
+        delete uploadPendingPayloadsRef.current[uploadId];
+        setSavingUploads((current) => ({ ...current, [uploadId]: false }));
+      }
+    }, 500);
+  };
+
   const updateUploadHistoryRows = (uploadId, rowId, updates) => {
-    const nextHistory = uploadHistory.map((upload) => {
-      if (upload.id !== uploadId) return upload;
+    const currentUpload = uploadDetailsById[uploadId];
+    if (!currentUpload) return;
 
-      return {
-        ...upload,
-        rows: (upload.rows || []).map((row) => (
-          row.id === rowId ? { ...row, ...updates } : row
-        )),
-      };
-    });
-    setUploadHistory(nextHistory);
+    const updatedUpload = {
+      ...currentUpload,
+      rows: (currentUpload.rows || []).map((row) => (
+        row.id === rowId ? { ...row, ...updates } : row
+      )),
+    };
 
-    const updatedUpload = nextHistory.find((upload) => upload.id === uploadId);
+    setUploadDetailsById((current) => ({ ...current, [uploadId]: updatedUpload }));
+    setUploadHistory((current) => current.map((upload) => (
+      upload.id === uploadId ? summarizeUpload(updatedUpload) : upload
+    )));
+
     if (updatedUpload) {
-      operatorUploadsAPI.update(updatedUpload._id || updatedUpload.id, updatedUpload).catch(() => {});
+      scheduleUploadSave(updatedUpload);
+    }
+  };
+
+  const updateUploadHistoryUpload = (uploadId, updates) => {
+    const currentUpload = uploadDetailsById[uploadId];
+    if (!currentUpload) return;
+
+    const updatedUpload = { ...currentUpload, ...updates };
+    setUploadDetailsById((current) => ({ ...current, [uploadId]: updatedUpload }));
+    setUploadHistory((current) => current.map((upload) => (
+      upload.id === uploadId ? summarizeUpload(updatedUpload) : upload
+    )));
+
+    if (updatedUpload) {
+      scheduleUploadSave(updatedUpload);
     }
   };
 
@@ -418,7 +539,35 @@ export default function AuditListPage() {
     updateUploadHistoryRows(selectedImport.id, rowId, { auditReasonOther: value });
   };
 
-  const operatorRows = selectedImport?.rows || [];
+  const addLineRemark = () => {
+    if (!selectedImport) return;
+    const nextRemarks = [
+      ...(selectedImport.lineRemarks || []),
+      {
+        id: `line-remark-${Date.now()}`,
+        line: lineOptions[1] || '',
+        remark: '',
+        status: 'Pending',
+      },
+    ];
+    updateUploadHistoryUpload(selectedImport.id, { lineRemarks: nextRemarks });
+  };
+
+  const updateLineRemark = (remarkId, updates) => {
+    if (!selectedImport) return;
+    const nextRemarks = (selectedImport.lineRemarks || []).map((entry) => (
+      entry.id === remarkId ? { ...entry, ...updates } : entry
+    ));
+    updateUploadHistoryUpload(selectedImport.id, { lineRemarks: nextRemarks });
+  };
+
+  const removeLineRemark = (remarkId) => {
+    if (!selectedImport) return;
+    const nextRemarks = (selectedImport.lineRemarks || []).filter((entry) => entry.id !== remarkId);
+    updateUploadHistoryUpload(selectedImport.id, { lineRemarks: nextRemarks });
+  };
+
+  const operatorRows = selectedImportDetails?.rows || [];
   const lineOptions = ['All', ...new Set(operatorRows.map((row) => row.line).filter(Boolean))];
   const sectionOptions = [
     'All',
@@ -437,49 +586,50 @@ export default function AuditListPage() {
 
   const uploadDates = [...new Set(uploadHistory.map((item) => toInputDate(item.importedAt)))].sort().reverse();
   const uploadWeeks = [...new Map(uploadHistory.map((item) => [item.week.key, item.week])).values()];
+  const completedAuditRows = operatorRows.filter((row) => row.auditDone === 'Yes').length;
+  const noAuditRows = operatorRows.filter((row) => row.auditDone === 'No').length;
+  const pendingAuditRows = operatorRows.filter((row) => !row.auditDone).length;
+  const lineRemarks = selectedImportDetails?.lineRemarks || [];
 
   return (
-    <div>
+    <div className="audit-page">
       <div className="page-header">
         <h1 className="page-title">Audits</h1>
       </div>
 
-      <div className="card">
+      <div className="card audit-upload-card">
         <div className="audit-upload-head">
           <div>
-            <h3 style={{ marginBottom: 8, fontSize: 16 }}>Operator Excel Upload</h3>
-            <p className="audit-upload-note">
-              Upload the report from the audits page. The importer reads headings from row 5 and keeps only Line, Section, Operator, Employee ID, Operation, and matched S / NS by operation code.
-            </p>
+            <h3 className="audit-section-title">Operator Audit Sheet</h3>
           </div>
-          <button
-            type="button"
-            className="btn btn-primary audit-upload-button"
-            onClick={() => fileInputRef.current?.click()}
-            disabled={uploadingOperators}
-          >
-            {uploadingOperators ? 'Uploading...' : 'Choose Excel File'}
-          </button>
+          <div className="audit-upload-controls">
+            <button
+              type="button"
+              className="btn btn-primary audit-upload-button"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={uploadingOperators}
+            >
+              {uploadingOperators ? 'Uploading...' : 'Choose Excel File'}
+            </button>
+            <input
+              ref={fileInputRef}
+              className="audit-file-input"
+              type="file"
+              accept=".xlsx,.xls,.csv"
+              onChange={handleOperatorUpload}
+              disabled={uploadingOperators}
+              tabIndex="-1"
+              aria-hidden="true"
+            />
+            <span className="audit-file-name">
+              {uploadFileName || 'No file selected'}
+            </span>
+          </div>
         </div>
 
-        <div className="audit-file-input-row">
-          <input
-            ref={fileInputRef}
-            className="audit-file-input"
-            type="file"
-            accept=".xlsx,.xls,.csv"
-            onChange={handleOperatorUpload}
-            disabled={uploadingOperators}
-          />
-        </div>
-
-        {!uploadHistory.length ? (
-          <div className="audit-upload-empty">
-            No operator report uploaded yet.
-          </div>
-        ) : (
+        {!uploadHistory.length || !selectedImport ? (
           <>
-            <div className="audit-history-filters">
+            <div className="audit-history-filters audit-history-filters-compact">
               <div className="form-group" style={{ marginBottom: 0 }}>
                 <label>Uploaded Date</label>
                 <select value={selectedUploadDate} onChange={(e) => setSelectedUploadDate(e.target.value)}>
@@ -499,47 +649,151 @@ export default function AuditListPage() {
                 </select>
               </div>
             </div>
-
-            {!selectedImport ? (
-              <div className="audit-upload-empty">
-                No uploaded sheet matches the selected date or week.
+            <div className="audit-upload-empty">
+              {uploadHistory.length ? 'No uploaded sheet matches the selected date or week.' : 'No operator report uploaded yet.'}
+            </div>
+          </>
+        ) : (
+          <>
+            <div className="audit-compact-summary">
+              <div className="audit-summary-chips">
+                <span className="audit-summary-chip">{selectedImport.rowCount || 0} rows</span>
+                <span className="audit-summary-chip">{selectedImport.lineCount || 0} lines</span>
+                <span className="audit-summary-chip">{selectedImport.sectionCount || 0} sections</span>
+                <span className="audit-summary-chip audit-summary-chip-success">{selectedImport.yesCount || 0} yes</span>
+                <span className="audit-summary-chip audit-summary-chip-danger">{selectedImport.noCount || 0} no</span>
+                <span className="audit-summary-chip">{selectedImport.pendingCount || 0} pending</span>
+                {savingUploads[selectedImport.id] ? (
+                  <span className="audit-summary-chip">Saving changes...</span>
+                ) : null}
               </div>
-            ) : (
-              <>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 20, marginBottom: 12 }}>
-                  <h3 style={{ fontSize: 16, fontWeight: 700 }}>Uploaded Operator Rows</h3>
-                  <div style={{ display: 'flex', gap: 8 }}>
-                    <button type="button" className="btn btn-secondary" onClick={clearSelectedUpload}>Clear Selected Sheet</button>
-                    <button type="button" className="btn btn-secondary" onClick={clearAllUploads}>Clear All Sheets</button>
+            </div>
+
+            <div className="audit-history-filters audit-history-filters-compact">
+              <div className="form-group" style={{ marginBottom: 0 }}>
+                <label>Uploaded Date</label>
+                <select value={selectedUploadDate} onChange={(e) => setSelectedUploadDate(e.target.value)}>
+                  <option value="">All Dates</option>
+                  {uploadDates.map((date) => (
+                    <option key={date} value={date}>{date}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="form-group" style={{ marginBottom: 0 }}>
+                <label>Week</label>
+                <select value={selectedWeekKey} onChange={(e) => setSelectedWeekKey(e.target.value)}>
+                  <option value="">All Weeks</option>
+                  {uploadWeeks.map((week) => (
+                    <option key={week.key} value={week.key}>{week.label}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="form-group" style={{ marginBottom: 0 }}>
+                <label>Line</label>
+                <select
+                  value={activeLine}
+                  onChange={(e) => {
+                    setActiveLine(e.target.value);
+                    setActiveSection('All');
+                  }}
+                >
+                  {lineOptions.map((line) => (
+                    <option key={line} value={line}>{line}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="form-group" style={{ marginBottom: 0 }}>
+                <label>Section</label>
+                <select value={activeSection} onChange={(e) => setActiveSection(e.target.value)}>
+                  {sectionOptions.map((section) => (
+                    <option key={section} value={section}>{section}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="form-group audit-actions-field" style={{ marginBottom: 0 }}>
+                <label>Actions</label>
+                <div className="audit-actions-menu-wrap">
+                  <button
+                    type="button"
+                    className="btn btn-secondary audit-actions-menu-trigger"
+                    onClick={() => setShowAuditActions((current) => !current)}
+                  >
+                    More
+                  </button>
+                  {showAuditActions ? (
+                    <div className="audit-actions-menu">
+                      <button type="button" className="audit-actions-menu-item" onClick={clearSelectedUpload}>Clear selected sheet</button>
+                      <button type="button" className="audit-actions-menu-item" onClick={clearAllUploads}>Clear all sheets</button>
+                    </div>
+                  ) : null}
+                </div>
+              </div>
+            </div>
+
+                <div className="audit-rows-head">
+                  <div>
+                    <h3 className="audit-section-title">Uploaded Operator Rows</h3>
                   </div>
                 </div>
 
-                <div className="audit-history-filters" style={{ marginTop: 0 }}>
-                  <div className="form-group" style={{ marginBottom: 0 }}>
-                    <label>Line</label>
-                    <select
-                      value={activeLine}
-                      onChange={(e) => {
-                        setActiveLine(e.target.value);
-                        setActiveSection('All');
-                      }}
-                    >
-                      {lineOptions.map((line) => (
-                        <option key={line} value={line}>{line}</option>
-                      ))}
-                    </select>
+                {uploadDetailsLoading && !selectedImportDetails ? (
+                  <div className="audit-upload-empty">Loading uploaded sheet...</div>
+                ) : (
+                  <>
+                <div className="audit-line-remarks-card">
+                  <div className="audit-line-remarks-head">
+                    <div>
+                      <h4 className="audit-line-remarks-title">Line-wise Remarks</h4>
+                    </div>
+                    <button type="button" className="btn btn-secondary" onClick={addLineRemark}>
+                      Add Remark
+                    </button>
                   </div>
-                  <div className="form-group" style={{ marginBottom: 0 }}>
-                    <label>Section</label>
-                    <select value={activeSection} onChange={(e) => setActiveSection(e.target.value)}>
-                      {sectionOptions.map((section) => (
-                        <option key={section} value={section}>{section}</option>
+                  {!lineRemarks.length ? (
+                    <div className="audit-line-remarks-empty">No line remarks added yet.</div>
+                  ) : (
+                    <div className="audit-line-remarks-list">
+                      {lineRemarks.map((entry) => (
+                        <div key={entry.id} className="audit-line-remark-row">
+                          <select
+                            className="audit-inline-select"
+                            value={entry.line}
+                            onChange={(e) => updateLineRemark(entry.id, { line: e.target.value })}
+                          >
+                            <option value="">Select line</option>
+                            {lineOptions.filter((line) => line !== 'All').map((line) => (
+                              <option key={line} value={line}>{line}</option>
+                            ))}
+                          </select>
+                          <input
+                            className="audit-reason-input"
+                            type="text"
+                            placeholder="Write line remark"
+                            value={entry.remark}
+                            onChange={(e) => updateLineRemark(entry.id, { remark: e.target.value })}
+                          />
+                          <select
+                            className="audit-inline-select"
+                            value={entry.status}
+                            onChange={(e) => updateLineRemark(entry.id, { status: e.target.value })}
+                          >
+                            <option value="Pending">Pending</option>
+                            <option value="Completed">Completed</option>
+                          </select>
+                          <button
+                            type="button"
+                            className="audit-line-remark-remove"
+                            onClick={() => removeLineRemark(entry.id)}
+                          >
+                            Remove
+                          </button>
+                        </div>
                       ))}
-                    </select>
-                  </div>
+                    </div>
+                  )}
                 </div>
 
-                <div className="operations-table-wrap" style={{ marginTop: 16 }}>
+                <div className="operations-table-wrap audit-table-wrap">
                   <table className="table audit-operator-table">
                     <thead>
                       <tr>
@@ -580,22 +834,57 @@ export default function AuditListPage() {
                                   src={row.picture}
                                   alt={`${row.operator || 'Operator'} reference`}
                                   className="audit-picture-preview"
+                                  onClick={() => setPreviewImage({
+                                    src: row.picture,
+                                    title: row.operator || 'Operator image',
+                                  })}
                                 />
                               ) : (
                                 <span className="audit-picture-empty">No image</span>
                               )}
-                              <label className="audit-picture-label">
-                                <span>{row.picture ? 'Change' : 'Add'}</span>
-                                <input
-                                  type="file"
-                                  accept="image/*"
-                                  onChange={(e) => {
-                                    const file = e.target.files?.[0];
-                                    if (file) handlePictureChange(row.id, file);
-                                    e.target.value = '';
-                                  }}
-                                />
-                              </label>
+                              <div className="audit-picture-actions">
+                                <button
+                                  type="button"
+                                  className="audit-picture-trigger"
+                                  aria-label="Add or change picture"
+                                  onClick={() => setOpenPictureMenuRowId((current) => (
+                                    current === row.id ? null : row.id
+                                  ))}
+                                >
+                                  +
+                                </button>
+                                {openPictureMenuRowId === row.id ? (
+                                  <div className="audit-picture-menu">
+                                    <label className="audit-picture-menu-item">
+                                      <span>Upload</span>
+                                      <input
+                                        type="file"
+                                        accept="image/*"
+                                        onChange={(e) => {
+                                          const file = e.target.files?.[0];
+                                          if (file) handlePictureChange(row.id, file);
+                                          e.target.value = '';
+                                          setOpenPictureMenuRowId(null);
+                                        }}
+                                      />
+                                    </label>
+                                    <label className="audit-picture-menu-item">
+                                      <span>Camera</span>
+                                      <input
+                                        type="file"
+                                        accept="image/*"
+                                        capture="environment"
+                                        onChange={(e) => {
+                                          const file = e.target.files?.[0];
+                                          if (file) handlePictureChange(row.id, file);
+                                          e.target.value = '';
+                                          setOpenPictureMenuRowId(null);
+                                        }}
+                                      />
+                                    </label>
+                                  </div>
+                                ) : null}
+                              </div>
                               {row.picture ? (
                                 <button
                                   type="button"
@@ -675,13 +964,13 @@ export default function AuditListPage() {
                     </tbody>
                   </table>
                 </div>
-              </>
-            )}
+                  </>
+                )}
           </>
         )}
       </div>
 
-      <div className="card" style={{ padding: '14px 20px' }}>
+      <div className="card audit-list-card">
         <div className="grid-2">
           <div className="form-group" style={{ marginBottom: 0 }}>
             <label>Filter by Status</label>
@@ -709,11 +998,11 @@ export default function AuditListPage() {
           <div className="loading">Loading audits...</div>
         </div>
       ) : audits.length === 0 ? (
-        <p style={{ textAlign: 'center', padding: '32px 0', color: '#6b7280' }}>
+        <p className="audit-empty-list">
           No audits found.
         </p>
       ) : (
-        <div className="card">
+        <div className="card audit-list-table-card">
           <table className="table">
             <thead>
               <tr>
@@ -747,6 +1036,30 @@ export default function AuditListPage() {
           </table>
         </div>
       )}
+
+      {previewImage ? (
+        <div className="audit-image-modal" role="dialog" aria-modal="true">
+          <button
+            type="button"
+            className="audit-image-backdrop"
+            aria-label="Close image preview"
+            onClick={() => setPreviewImage(null)}
+          />
+          <div className="audit-image-dialog">
+            <div className="audit-image-dialog-head">
+              <strong>{previewImage.title}</strong>
+              <button
+                type="button"
+                className="audit-image-close"
+                onClick={() => setPreviewImage(null)}
+              >
+                Close
+              </button>
+            </div>
+            <img src={previewImage.src} alt={previewImage.title} className="audit-image-full" />
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

@@ -1,6 +1,10 @@
 import React, { useDeferredValue, useState } from 'react';
 import { operationData, operationSections } from '../data/operationData';
 
+const toTitleCase = (value) => String(value || '')
+  .toLowerCase()
+  .replace(/\b\w/g, (match) => match.toUpperCase());
+
 export default function OperationsPage() {
   const [search, setSearch] = useState('');
   const [section, setSection] = useState('');
@@ -117,8 +121,8 @@ export default function OperationsPage() {
                 <tr key={item.id}>
                   <td><code>{item.operationCode}</code></td>
                   <td>{item.slNo}</td>
-                  <td style={{ minWidth: 280 }}>{item.operationName}</td>
-                  <td>{item.section}</td>
+                  <td style={{ minWidth: 280 }}>{toTitleCase(item.operationName)}</td>
+                  <td>{toTitleCase(item.section)}</td>
                   <td>{item.smv}</td>
                   <td>{item.hundredPercent}</td>
                   <td>{item.speedType}</td>

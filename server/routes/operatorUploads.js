@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const {
   listUploads,
+  getUpload,
   createUpload,
   updateUpload,
   deleteUpload,
@@ -17,6 +18,7 @@ router.route('/')
   .delete(clearUploads);
 
 router.route('/:id')
+  .get(getUpload)
   .put(updateUpload)
   .delete(deleteUpload);
 

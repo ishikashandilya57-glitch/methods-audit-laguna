@@ -61,6 +61,7 @@ export const roadmapAPI = {
 
 export const operatorUploadsAPI = {
   getAll: () => api.get('/operator-uploads'),
+  getOne: (id) => api.get(`/operator-uploads/${id}`),
   create: (data) => api.post('/operator-uploads', data),
   update: (id, data) => api.put(`/operator-uploads/${id}`, data),
   delete: (id) => api.delete(`/operator-uploads/${id}`),

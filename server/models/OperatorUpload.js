@@ -17,6 +17,16 @@ const OperatorRowSchema = new mongoose.Schema(
   { _id: false }
 );
 
+const LineRemarkSchema = new mongoose.Schema(
+  {
+    id: String,
+    line: String,
+    remark: String,
+    status: String,
+  },
+  { _id: false }
+);
+
 const OperatorUploadSchema = new mongoose.Schema(
   {
     fileName: {
@@ -34,6 +44,7 @@ const OperatorUploadSchema = new mongoose.Schema(
       label: String,
     },
     rows: [OperatorRowSchema],
+    lineRemarks: [LineRemarkSchema],
     createdBy: {
       type: String,
     },

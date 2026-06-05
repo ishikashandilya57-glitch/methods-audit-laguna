@@ -41,6 +41,23 @@ const getStatusClass = (status) => {
   return 'is-pending';
 };
 
+const getDepartmentGroupIndexes = (rows) => {
+  const indexes = {};
+  let currentDepartment = null;
+  let currentGroup = -1;
+
+  rows.forEach((row, index) => {
+    if (row.department !== currentDepartment) {
+      currentDepartment = row.department;
+      currentGroup += 1;
+    }
+
+    indexes[index] = currentGroup;
+  });
+
+  return indexes;
+};
+
 const currentRoadmapMonthKey = roadmapMonths[0].key;
 
 export default function RoadmapPage() {
@@ -59,6 +76,7 @@ export default function RoadmapPage() {
   }, []);
 
   const departmentSpans = useMemo(() => getRowSpans(rows, 'department'), [rows]);
+  const departmentGroupIndexes = useMemo(() => getDepartmentGroupIndexes(rows), [rows]);
   const typeSpans = useMemo(() => {
     const spans = {};
     let index = 0;
@@ -143,11 +161,14 @@ export default function RoadmapPage() {
             </thead>
             <tbody>
               {rows.map((row, index) => (
-                <tr key={`${row.department}-${row.sno}-${row.section}`}>
+                <tr
+                  key={`${row.department}-${row.sno}-${row.section}`}
+                  className={`roadmap-row-group-${departmentGroupIndexes[index] % 2 === 0 ? 'even' : 'odd'}`}
+                >
                   <td className="roadmap-sno">{row.sno}</td>
                   {departmentSpans[index] ? (
                     <td rowSpan={departmentSpans[index]} className="roadmap-merge roadmap-department">
-                      {row.department}
+                      <div className="roadmap-department-badge">{row.department}</div>
                     </td>
                   ) : null}
                   {typeSpans[index] ? (

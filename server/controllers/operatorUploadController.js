@@ -149,6 +149,45 @@ const getUpload = async (req, res) => {
   }
 };
 
+const updateUploadRow = async (req, res) => {
+  try {
+    const upload = await OperatorUpload.findById(req.params.id);
+    if (!upload) return res.status(404).json({ message: 'Upload not found' });
+
+    const row = upload.rows.find((item) => item.id === req.params.rowId);
+    if (!row) return res.status(404).json({ message: 'Upload row not found' });
+
+    const allowedFields = ['speedType', 'picture', 'auditDone', 'auditReason', 'auditReasonOther'];
+    allowedFields.forEach((field) => {
+      if (Object.prototype.hasOwnProperty.call(req.body, field)) {
+        row[field] = req.body[field];
+      }
+    });
+
+    upload.markModified('rows');
+    await upload.save();
+
+    res.json({ message: 'Row updated', row });
+  } catch (error) {
+    res.status(400).json({ message: error.message });
+  }
+};
+
+const updateUploadLineRemarks = async (req, res) => {
+  try {
+    const upload = await OperatorUpload.findById(req.params.id);
+    if (!upload) return res.status(404).json({ message: 'Upload not found' });
+
+    upload.lineRemarks = Array.isArray(req.body.lineRemarks) ? req.body.lineRemarks : [];
+    upload.markModified('lineRemarks');
+    await upload.save();
+
+    res.json({ message: 'Line remarks updated', lineRemarks: upload.lineRemarks });
+  } catch (error) {
+    res.status(400).json({ message: error.message });
+  }
+};
+
 const createUpload = async (req, res) => {
   try {
     const upload = await OperatorUpload.create({
@@ -196,6 +235,8 @@ const clearUploads = async (req, res) => {
 module.exports = {
   listUploads,
   getUpload,
+  updateUploadRow,
+  updateUploadLineRemarks,
   createUpload,
   updateUpload,
   deleteUpload,

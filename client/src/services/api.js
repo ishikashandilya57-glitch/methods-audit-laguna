@@ -64,6 +64,8 @@ export const operatorUploadsAPI = {
   getOne: (id) => api.get(`/operator-uploads/${id}`),
   create: (data) => api.post('/operator-uploads', data),
   update: (id, data) => api.put(`/operator-uploads/${id}`, data),
+  patchRow: (id, rowId, data) => api.patch(`/operator-uploads/${id}/rows/${rowId}`, data),
+  patchLineRemarks: (id, lineRemarks) => api.patch(`/operator-uploads/${id}/line-remarks`, { lineRemarks }),
   delete: (id) => api.delete(`/operator-uploads/${id}`),
   clearAll: () => api.delete('/operator-uploads'),
 };

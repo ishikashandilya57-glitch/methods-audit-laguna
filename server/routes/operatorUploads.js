@@ -3,6 +3,8 @@ const router = express.Router();
 const {
   listUploads,
   getUpload,
+  updateUploadRow,
+  updateUploadLineRemarks,
   createUpload,
   updateUpload,
   deleteUpload,
@@ -21,5 +23,8 @@ router.route('/:id')
   .get(getUpload)
   .put(updateUpload)
   .delete(deleteUpload);
+
+router.patch('/:id/rows/:rowId', updateUploadRow);
+router.patch('/:id/line-remarks', updateUploadLineRemarks);
 
 module.exports = router;

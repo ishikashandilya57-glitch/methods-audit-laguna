@@ -33,6 +33,46 @@ const writeCachedJson = (key, value) => {
   }
 };
 
+const readFileAsDataUrl = (file) => new Promise((resolve, reject) => {
+  const reader = new FileReader();
+  reader.onload = () => resolve(reader.result);
+  reader.onerror = () => reject(new Error('Failed to read image'));
+  reader.readAsDataURL(file);
+});
+
+const resizeImageToDataUrl = (file, maxSize = 1440, quality = 0.72) => new Promise((resolve, reject) => {
+  const objectUrl = URL.createObjectURL(file);
+  const image = new Image();
+
+  image.onload = () => {
+    const scale = Math.min(1, maxSize / Math.max(image.width, image.height));
+    const width = Math.max(1, Math.round(image.width * scale));
+    const height = Math.max(1, Math.round(image.height * scale));
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+    const context = canvas.getContext('2d');
+
+    if (!context) {
+      URL.revokeObjectURL(objectUrl);
+      reject(new Error('Failed to prepare image'));
+      return;
+    }
+
+    context.drawImage(image, 0, 0, width, height);
+    const result = canvas.toDataURL('image/jpeg', quality);
+    URL.revokeObjectURL(objectUrl);
+    resolve(result);
+  };
+
+  image.onerror = () => {
+    URL.revokeObjectURL(objectUrl);
+    reject(new Error('Failed to load image'));
+  };
+
+  image.src = objectUrl;
+});
+
 const normalizeHeader = (value) =>
   String(value || '')
     .trim()
@@ -124,8 +164,10 @@ export default function AuditListPage() {
   const [previewImage, setPreviewImage] = useState(null);
   const [filters, setFilters] = useState({ status: '', area: '' });
   const fileInputRef = useRef(null);
-  const uploadSaveTimersRef = useRef({});
-  const uploadPendingPayloadsRef = useRef({});
+  const rowSaveTimersRef = useRef({});
+  const rowPendingPayloadsRef = useRef({});
+  const lineRemarkSaveTimersRef = useRef({});
+  const lineRemarkPendingPayloadsRef = useRef({});
   const operationMatcher = useMemo(() => {
     const entries = operationData.map((item) => ({
       operationCode: String(item.operationCode || '').trim().toUpperCase(),
@@ -324,7 +366,8 @@ export default function AuditListPage() {
   }, [operationMatcher]);
 
   useEffect(() => () => {
-    Object.values(uploadSaveTimersRef.current).forEach((timer) => clearTimeout(timer));
+    Object.values(rowSaveTimersRef.current).forEach((timer) => clearTimeout(timer));
+    Object.values(lineRemarkSaveTimersRef.current).forEach((timer) => clearTimeout(timer));
   }, []);
 
   useEffect(() => {
@@ -457,10 +500,17 @@ export default function AuditListPage() {
 
   const clearSelectedUpload = () => {
     if (!selectedImport) return;
-    if (uploadSaveTimersRef.current[selectedImport.id]) {
-      clearTimeout(uploadSaveTimersRef.current[selectedImport.id]);
-      delete uploadSaveTimersRef.current[selectedImport.id];
-      delete uploadPendingPayloadsRef.current[selectedImport.id];
+    Object.keys(rowSaveTimersRef.current)
+      .filter((key) => key.startsWith(`${selectedImport.id}::`))
+      .forEach((key) => {
+        clearTimeout(rowSaveTimersRef.current[key]);
+        delete rowSaveTimersRef.current[key];
+        delete rowPendingPayloadsRef.current[key];
+      });
+    if (lineRemarkSaveTimersRef.current[selectedImport.id]) {
+      clearTimeout(lineRemarkSaveTimersRef.current[selectedImport.id]);
+      delete lineRemarkSaveTimersRef.current[selectedImport.id];
+      delete lineRemarkPendingPayloadsRef.current[selectedImport.id];
     }
     operatorUploadsAPI.delete(selectedImport._id || selectedImport.id)
       .then(() => {
@@ -477,9 +527,12 @@ export default function AuditListPage() {
   };
 
   const clearAllUploads = () => {
-    Object.values(uploadSaveTimersRef.current).forEach((timer) => clearTimeout(timer));
-    uploadSaveTimersRef.current = {};
-    uploadPendingPayloadsRef.current = {};
+    Object.values(rowSaveTimersRef.current).forEach((timer) => clearTimeout(timer));
+    Object.values(lineRemarkSaveTimersRef.current).forEach((timer) => clearTimeout(timer));
+    rowSaveTimersRef.current = {};
+    rowPendingPayloadsRef.current = {};
+    lineRemarkSaveTimersRef.current = {};
+    lineRemarkPendingPayloadsRef.current = {};
     operatorUploadsAPI.clearAll()
       .then(() => {
         uploadHistory.forEach((upload) => window.localStorage.removeItem(uploadDetailCacheKey(upload.id)));
@@ -493,30 +546,69 @@ export default function AuditListPage() {
       .catch(() => toast.error('Failed to remove uploaded sheets'));
   };
 
-  const scheduleUploadSave = (upload) => {
-    const uploadId = upload.id;
-    if (!uploadId) return;
+  const scheduleRowSave = (uploadId, rowId, updates) => {
+    if (!uploadId || !rowId) return;
+    const timerKey = `${uploadId}::${rowId}`;
 
-    uploadPendingPayloadsRef.current[uploadId] = upload;
+    rowPendingPayloadsRef.current[timerKey] = updates;
     setSavingUploads((current) => ({ ...current, [uploadId]: true }));
 
-    if (uploadSaveTimersRef.current[uploadId]) {
-      clearTimeout(uploadSaveTimersRef.current[uploadId]);
+    if (rowSaveTimersRef.current[timerKey]) {
+      clearTimeout(rowSaveTimersRef.current[timerKey]);
     }
 
-    uploadSaveTimersRef.current[uploadId] = setTimeout(async () => {
-      const payload = uploadPendingPayloadsRef.current[uploadId];
+    rowSaveTimersRef.current[timerKey] = setTimeout(async () => {
+      const payload = rowPendingPayloadsRef.current[timerKey];
 
       try {
-        await operatorUploadsAPI.update(payload._id || payload.id, payload);
+        await operatorUploadsAPI.patchRow(uploadId, rowId, payload);
       } catch (error) {
-        toast.error(error.response?.data?.message || 'Failed to save audit changes');
+        toast.error(error.response?.data?.message || 'Failed to save audit row');
       } finally {
-        delete uploadSaveTimersRef.current[uploadId];
-        delete uploadPendingPayloadsRef.current[uploadId];
-        setSavingUploads((current) => ({ ...current, [uploadId]: false }));
+        delete rowSaveTimersRef.current[timerKey];
+        delete rowPendingPayloadsRef.current[timerKey];
+
+        const hasPendingForUpload = Object.keys(rowPendingPayloadsRef.current)
+          .some((key) => key.startsWith(`${uploadId}::`))
+          || !!lineRemarkPendingPayloadsRef.current[uploadId];
+
+        if (!hasPendingForUpload) {
+          setSavingUploads((current) => ({ ...current, [uploadId]: false }));
+        }
       }
-    }, 500);
+    }, 350);
+  };
+
+  const scheduleLineRemarksSave = (uploadId, lineRemarks) => {
+    if (!uploadId) return;
+
+    lineRemarkPendingPayloadsRef.current[uploadId] = lineRemarks;
+    setSavingUploads((current) => ({ ...current, [uploadId]: true }));
+
+    if (lineRemarkSaveTimersRef.current[uploadId]) {
+      clearTimeout(lineRemarkSaveTimersRef.current[uploadId]);
+    }
+
+    lineRemarkSaveTimersRef.current[uploadId] = setTimeout(async () => {
+      const payload = lineRemarkPendingPayloadsRef.current[uploadId];
+
+      try {
+        await operatorUploadsAPI.patchLineRemarks(uploadId, payload);
+      } catch (error) {
+        toast.error(error.response?.data?.message || 'Failed to save line remarks');
+      } finally {
+        delete lineRemarkSaveTimersRef.current[uploadId];
+        delete lineRemarkPendingPayloadsRef.current[uploadId];
+
+        const hasPendingForUpload = Object.keys(rowPendingPayloadsRef.current)
+          .some((key) => key.startsWith(`${uploadId}::`))
+          || !!lineRemarkPendingPayloadsRef.current[uploadId];
+
+        if (!hasPendingForUpload) {
+          setSavingUploads((current) => ({ ...current, [uploadId]: false }));
+        }
+      }
+    }, 450);
   };
 
   const updateUploadHistoryRows = (uploadId, rowId, updates) => {
@@ -543,7 +635,7 @@ export default function AuditListPage() {
     )));
 
     writeCachedJson(uploadDetailCacheKey(uploadId), updatedUpload);
-    scheduleUploadSave(updatedUpload);
+    scheduleRowSave(uploadId, rowId, updates);
   };
 
   const updateUploadHistoryUpload = (uploadId, updates) => {
@@ -564,7 +656,7 @@ export default function AuditListPage() {
     )));
 
     writeCachedJson(uploadDetailCacheKey(uploadId), updatedUpload);
-    scheduleUploadSave(updatedUpload);
+    scheduleLineRemarksSave(uploadId, updatedUpload.lineRemarks || []);
   };
 
   const handleSpeedTypeChange = (rowId, value) => {
@@ -572,14 +664,16 @@ export default function AuditListPage() {
     updateUploadHistoryRows(selectedImport.id, rowId, { speedType: value });
   };
 
-  const handlePictureChange = (rowId, file) => {
+  const handlePictureChange = async (rowId, file) => {
     if (!selectedImport || !file) return;
-
-    const reader = new FileReader();
-    reader.onload = () => {
-      updateUploadHistoryRows(selectedImport.id, rowId, { picture: reader.result });
-    };
-    reader.readAsDataURL(file);
+    try {
+      const picture = file.type.startsWith('image/')
+        ? await resizeImageToDataUrl(file)
+        : await readFileAsDataUrl(file);
+      updateUploadHistoryRows(selectedImport.id, rowId, { picture });
+    } catch (error) {
+      toast.error('Failed to process image');
+    }
   };
 
   const clearPicture = (rowId) => {

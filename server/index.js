@@ -1,4 +1,5 @@
 const express = require('express');
+const compression = require('compression');
 const cors = require('cors');
 const dotenv = require('dotenv');
 const rateLimit = require('express-rate-limit');
@@ -29,6 +30,7 @@ app.use(cors({
     callback(new Error('Not allowed by CORS'));
   },
 }));
+app.use(compression());
 app.use(express.json({ limit: '10mb' }));
 
 // Routes

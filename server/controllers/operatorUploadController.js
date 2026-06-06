@@ -29,8 +29,111 @@ const buildUploadSummary = (upload) => {
 
 const listUploads = async (req, res) => {
   try {
-    const uploads = await OperatorUpload.find().sort({ importedAt: -1, createdAt: -1 });
-    res.json(uploads.map(buildUploadSummary));
+    const uploads = await OperatorUpload.aggregate([
+      {
+        $project: {
+          fileName: 1,
+          importedAt: 1,
+          week: 1,
+          createdBy: 1,
+          createdAt: 1,
+          updatedAt: 1,
+          rowsSafe: { $ifNull: ['$rows', []] },
+          lineRemarksCount: { $size: { $ifNull: ['$lineRemarks', []] } },
+        },
+      },
+      {
+        $project: {
+          fileName: 1,
+          importedAt: 1,
+          week: 1,
+          createdBy: 1,
+          createdAt: 1,
+          updatedAt: 1,
+          lineRemarksCount: 1,
+          rowCount: { $size: '$rowsSafe' },
+          lineCount: {
+            $size: {
+              $setUnion: [
+                [],
+                {
+                  $filter: {
+                    input: {
+                      $map: {
+                        input: '$rowsSafe',
+                        as: 'row',
+                        in: '$$row.line',
+                      },
+                    },
+                    as: 'line',
+                    cond: {
+                      $and: [
+                        { $ne: ['$$line', null] },
+                        { $ne: ['$$line', ''] },
+                      ],
+                    },
+                  },
+                },
+              ],
+            },
+          },
+          sectionCount: {
+            $size: {
+              $setUnion: [
+                [],
+                {
+                  $filter: {
+                    input: {
+                      $map: {
+                        input: '$rowsSafe',
+                        as: 'row',
+                        in: '$$row.section',
+                      },
+                    },
+                    as: 'section',
+                    cond: {
+                      $and: [
+                        { $ne: ['$$section', null] },
+                        { $ne: ['$$section', ''] },
+                      ],
+                    },
+                  },
+                },
+              ],
+            },
+          },
+          yesCount: {
+            $size: {
+              $filter: {
+                input: '$rowsSafe',
+                as: 'row',
+                cond: { $eq: ['$$row.auditDone', 'Yes'] },
+              },
+            },
+          },
+          noCount: {
+            $size: {
+              $filter: {
+                input: '$rowsSafe',
+                as: 'row',
+                cond: { $eq: ['$$row.auditDone', 'No'] },
+              },
+            },
+          },
+        },
+      },
+      {
+        $addFields: {
+          id: { $toString: '$_id' },
+          pendingCount: {
+            $subtract: ['$rowCount', { $add: ['$yesCount', '$noCount'] }],
+          },
+        },
+      },
+      { $sort: { importedAt: -1, createdAt: -1 } },
+    ]);
+
+    res.json(uploads);
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
@@ -38,7 +141,7 @@ const listUploads = async (req, res) => {
 
 const getUpload = async (req, res) => {
   try {
-    const upload = await OperatorUpload.findById(req.params.id);
+    const upload = await OperatorUpload.findById(req.params.id).lean();
     if (!upload) return res.status(404).json({ message: 'Upload not found' });
     res.json(upload);
   } catch (error) {

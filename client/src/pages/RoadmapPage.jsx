@@ -77,6 +77,20 @@ export default function RoadmapPage() {
 
   const departmentSpans = useMemo(() => getRowSpans(rows, 'department'), [rows]);
   const departmentGroupIndexes = useMemo(() => getDepartmentGroupIndexes(rows), [rows]);
+  const roadmapSummary = useMemo(() => {
+    const departments = new Set(rows.map((row) => row.department).filter(Boolean));
+    const completed = rows.filter((row) => row.status === 'COMPLETED').length;
+    const onGoing = rows.filter((row) => row.status === 'ON GOING').length;
+    const pending = rows.filter((row) => row.status === 'PENDING').length;
+
+    return {
+      departments: departments.size,
+      sections: rows.length,
+      completed,
+      onGoing,
+      pending,
+    };
+  }, [rows]);
   const typeSpans = useMemo(() => {
     const spans = {};
     let index = 0;
@@ -129,7 +143,7 @@ export default function RoadmapPage() {
         <div>
           <h1 className="page-title roadmap-title">Method Standardization Roadmap</h1>
           <p className="dashboard-subtitle">
-            Month-wise manual gantt roadmap with pending status by default.
+            Track monthly rollout progress across departments and sections.
           </p>
         </div>
       </div>
@@ -138,77 +152,94 @@ export default function RoadmapPage() {
         {loading ? (
           <div className="loading" style={{ padding: 24 }}>Loading roadmap...</div>
         ) : (
-        <div className="roadmap-table-wrap">
-          <table className="roadmap-table">
-            <thead>
-              <tr>
-                <th rowSpan="2">S.NO.</th>
-                <th rowSpan="2">DEPARTMENT</th>
-                <th rowSpan="2">STANDARD/NON-STANDARD</th>
-                <th rowSpan="2">SECTION</th>
-                <th rowSpan="2">STATUS</th>
-                {quarterColumns.map((quarter) => (
-                  <th key={quarter.key} colSpan="3">{quarter.label}</th>
-                ))}
-              </tr>
-              <tr>
-                {roadmapMonths.map((month) => (
-                  <th key={month.key} className="roadmap-period-head">
-                    {month.label}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((row, index) => (
-                <tr
-                  key={`${row.department}-${row.sno}-${row.section}`}
-                  className={`roadmap-row-group-${departmentGroupIndexes[index] % 2 === 0 ? 'even' : 'odd'}`}
-                >
-                  <td className="roadmap-sno">{row.sno}</td>
-                  {departmentSpans[index] ? (
-                    <td rowSpan={departmentSpans[index]} className="roadmap-merge roadmap-department">
-                      <div className="roadmap-department-badge">{row.department}</div>
-                    </td>
-                  ) : null}
-                  {typeSpans[index] ? (
-                    <td rowSpan={typeSpans[index]} className="roadmap-merge roadmap-standard">
-                      {row.standardType}
-                    </td>
-                  ) : null}
-                  <td>{row.section}</td>
-                  <td className="roadmap-control-cell">
-                    <select
-                      className={`roadmap-select ${getStatusClass(row.status)}`}
-                      value={row.status}
-                      onChange={(e) => updateRow(row.sno, 'status', e.target.value)}
+          <>
+            <div className="roadmap-toolbar">
+              <div className="roadmap-summary-row">
+                <span className="roadmap-summary-chip">{roadmapSummary.departments} departments</span>
+                <span className="roadmap-summary-chip">{roadmapSummary.sections} sections</span>
+                <span className="roadmap-summary-chip is-done">{roadmapSummary.completed} completed</span>
+                <span className="roadmap-summary-chip is-active">{roadmapSummary.onGoing} on going</span>
+                <span className="roadmap-summary-chip is-pending">{roadmapSummary.pending} pending</span>
+              </div>
+              <div className="roadmap-legend">
+                <span className="roadmap-legend-item"><span className="roadmap-legend-swatch is-done" />Completed</span>
+                <span className="roadmap-legend-item"><span className="roadmap-legend-swatch is-active" />On Going</span>
+                <span className="roadmap-legend-item"><span className="roadmap-legend-swatch is-pending" />Pending</span>
+              </div>
+            </div>
+
+            <div className="roadmap-table-wrap">
+              <table className="roadmap-table">
+                <thead>
+                  <tr>
+                    <th rowSpan="2" className="roadmap-sticky-col roadmap-sticky-sno">S.NO.</th>
+                    <th rowSpan="2" className="roadmap-sticky-col roadmap-sticky-department">DEPARTMENT</th>
+                    <th rowSpan="2" className="roadmap-sticky-col roadmap-sticky-type">STANDARD/NON-STANDARD</th>
+                    <th rowSpan="2" className="roadmap-sticky-col roadmap-sticky-section">SECTION</th>
+                    <th rowSpan="2" className="roadmap-sticky-col roadmap-sticky-status">STATUS</th>
+                    {quarterColumns.map((quarter) => (
+                      <th key={quarter.key} colSpan="3" className="roadmap-quarter-head">{quarter.label}</th>
+                    ))}
+                  </tr>
+                  <tr>
+                    {roadmapMonths.map((month) => (
+                      <th key={month.key} className="roadmap-period-head">
+                        {month.label}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.map((row, index) => (
+                    <tr
+                      key={`${row.department}-${row.sno}-${row.section}`}
+                      className={`roadmap-row-group-${departmentGroupIndexes[index] % 2 === 0 ? 'even' : 'odd'}`}
                     >
-                      {statusOptions.map((status) => (
-                        <option key={status} value={status}>{status}</option>
+                      <td className="roadmap-sno roadmap-sticky-col roadmap-sticky-sno">{row.sno}</td>
+                      {departmentSpans[index] ? (
+                        <td rowSpan={departmentSpans[index]} className="roadmap-merge roadmap-department roadmap-sticky-col roadmap-sticky-department">
+                          <div className="roadmap-department-badge">{row.department}</div>
+                        </td>
+                      ) : null}
+                      {typeSpans[index] ? (
+                        <td rowSpan={typeSpans[index]} className="roadmap-merge roadmap-standard roadmap-sticky-col roadmap-sticky-type">
+                          {row.standardType}
+                        </td>
+                      ) : null}
+                      <td className="roadmap-section-cell roadmap-sticky-col roadmap-sticky-section">{row.section}</td>
+                      <td className="roadmap-control-cell roadmap-sticky-col roadmap-sticky-status">
+                        <select
+                          className={`roadmap-select ${getStatusClass(row.status)}`}
+                          value={row.status}
+                          onChange={(e) => updateRow(row.sno, 'status', e.target.value)}
+                        >
+                          {statusOptions.map((status) => (
+                            <option key={status} value={status}>{status}</option>
+                          ))}
+                        </select>
+                      </td>
+                      {roadmapMonths.map((month) => (
+                        <td
+                          key={`${row.sno}-${month.key}`}
+                          className={`roadmap-timeline-cell ${getQuarterCellClass(row, month.key)}`}
+                        >
+                          <button
+                            type="button"
+                            className={`roadmap-quarter-button ${getQuarterCellClass(row, month.key)}`}
+                            aria-label={`${row.section} ${month.label} ${row.status}`}
+                            onClick={() => {
+                              if (row.status === 'PENDING') return;
+                              updateRow(row.sno, month.key, !row[month.key]);
+                            }}
+                          />
+                        </td>
                       ))}
-                    </select>
-                  </td>
-                  {roadmapMonths.map((month) => (
-                    <td
-                      key={`${row.sno}-${month.key}`}
-                      className={`roadmap-timeline-cell ${getQuarterCellClass(row, month.key)}`}
-                    >
-                      <button
-                        type="button"
-                        className={`roadmap-quarter-button ${getQuarterCellClass(row, month.key)}`}
-                        aria-label={`${row.section} ${month.label} ${row.status}`}
-                        onClick={() => {
-                          if (row.status === 'PENDING') return;
-                          updateRow(row.sno, month.key, !row[month.key]);
-                        }}
-                      />
-                    </td>
+                    </tr>
                   ))}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+                </tbody>
+              </table>
+            </div>
+          </>
         )}
       </div>
     </div>

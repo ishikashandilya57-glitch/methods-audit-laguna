@@ -13,6 +13,26 @@ const auditReasonOptions = [
   'Other',
 ];
 
+const UPLOAD_HISTORY_CACHE_KEY = 'method360-upload-history-cache-v1';
+const uploadDetailCacheKey = (id) => `method360-upload-detail-cache-v1:${id}`;
+
+const readCachedJson = (key, fallback) => {
+  try {
+    const raw = window.localStorage.getItem(key);
+    return raw ? JSON.parse(raw) : fallback;
+  } catch (error) {
+    return fallback;
+  }
+};
+
+const writeCachedJson = (key, value) => {
+  try {
+    window.localStorage.setItem(key, JSON.stringify(value));
+  } catch (error) {
+    // Ignore cache write failures.
+  }
+};
+
 const normalizeHeader = (value) =>
   String(value || '')
     .trim()
@@ -92,6 +112,7 @@ export default function AuditListPage() {
   const [uploadFileName, setUploadFileName] = useState('');
   const [uploadHistory, setUploadHistory] = useState([]);
   const [uploadDetailsById, setUploadDetailsById] = useState({});
+  const [uploadDetailErrors, setUploadDetailErrors] = useState({});
   const [selectedUploadDate, setSelectedUploadDate] = useState('');
   const [selectedWeekKey, setSelectedWeekKey] = useState('');
   const [activeLine, setActiveLine] = useState('All');
@@ -216,35 +237,44 @@ export default function AuditListPage() {
   };
 
   const hydrateUploadHistory = (history) => (
-    history.map((upload) => ({
-      ...upload,
-      id: upload.id || upload._id,
-      rowCount: upload.rowCount || (upload.rows || []).length,
-      lineCount: upload.lineCount || new Set((upload.rows || []).map((row) => row.line).filter(Boolean)).size,
-      sectionCount: upload.sectionCount || new Set((upload.rows || []).map((row) => row.section).filter(Boolean)).size,
-      yesCount: upload.yesCount || (upload.rows || []).filter((row) => row.auditDone === 'Yes').length,
-      noCount: upload.noCount || (upload.rows || []).filter((row) => row.auditDone === 'No').length,
-      pendingCount: upload.pendingCount ?? Math.max((upload.rows || []).length - ((upload.yesCount || 0) + (upload.noCount || 0)), 0),
-      lineRemarks: (upload.lineRemarks || []).map((remark, index) => ({
-        id: remark.id || `line-remark-${index + 1}`,
-        line: remark.line || '',
-        remark: remark.remark || '',
-        status: remark.status || 'Pending',
-      })),
-      rows: (upload.rows || []).map((row, index) => ({
-        ...row,
-        id: row.id || `audit-list-operator-row-${index + 1}`,
-        employeeId: row.employeeId || row.employee || '',
-        operationCode: row.operationCode || '',
-        picture: row.picture || '',
-        auditDone: row.auditDone || '',
-        auditReason: row.auditReason || '',
-        auditReasonOther: row.auditReasonOther || '',
-        speedType: row.speedType === 'S' || row.speedType === 'NS'
-          ? row.speedType
-          : matchOperationSpeedType(row.operationCode, row.operation, row.section),
-      })),
-    }))
+    history.map((upload) => {
+      const hasRows = Array.isArray(upload.rows);
+      const hasLineRemarks = Array.isArray(upload.lineRemarks);
+
+      return {
+        ...upload,
+        id: upload.id || upload._id,
+        hasFullDetails: hasRows,
+        rowCount: upload.rowCount ?? (hasRows ? upload.rows.length : 0),
+        lineCount: upload.lineCount ?? (hasRows ? new Set(upload.rows.map((row) => row.line).filter(Boolean)).size : 0),
+        sectionCount: upload.sectionCount ?? (hasRows ? new Set(upload.rows.map((row) => row.section).filter(Boolean)).size : 0),
+        yesCount: upload.yesCount ?? (hasRows ? upload.rows.filter((row) => row.auditDone === 'Yes').length : 0),
+        noCount: upload.noCount ?? (hasRows ? upload.rows.filter((row) => row.auditDone === 'No').length : 0),
+        pendingCount: upload.pendingCount ?? (hasRows
+          ? Math.max(upload.rows.length - upload.rows.filter((row) => row.auditDone === 'Yes').length - upload.rows.filter((row) => row.auditDone === 'No').length, 0)
+          : 0),
+        lineRemarksCount: upload.lineRemarksCount ?? (hasLineRemarks ? upload.lineRemarks.length : 0),
+        lineRemarks: hasLineRemarks ? upload.lineRemarks.map((remark, index) => ({
+          id: remark.id || `line-remark-${index + 1}`,
+          line: remark.line || '',
+          remark: remark.remark || '',
+          status: remark.status || 'Pending',
+        })) : undefined,
+        rows: hasRows ? upload.rows.map((row, index) => ({
+          ...row,
+          id: row.id || `audit-list-operator-row-${index + 1}`,
+          employeeId: row.employeeId || row.employee || '',
+          operationCode: row.operationCode || '',
+          picture: row.picture || '',
+          auditDone: row.auditDone || '',
+          auditReason: row.auditReason || '',
+          auditReasonOther: row.auditReasonOther || '',
+          speedType: row.speedType === 'S' || row.speedType === 'NS'
+            ? row.speedType
+            : matchOperationSpeedType(row.operationCode, row.operation, row.section),
+        })) : undefined,
+      };
+    })
   );
 
   const summarizeUpload = (upload) => {
@@ -275,19 +305,34 @@ export default function AuditListPage() {
 
   const fetchUploadHistory = () => {
     operatorUploadsAPI.getAll()
-      .then(({ data }) => setUploadHistory(hydrateUploadHistory(data || [])))
+      .then(({ data }) => {
+        const hydrated = hydrateUploadHistory(data || []);
+        setUploadHistory(hydrated);
+        writeCachedJson(UPLOAD_HISTORY_CACHE_KEY, data || []);
+      })
       .catch(() => setUploadHistory([]));
   };
 
   useEffect(() => { fetchAudits(); }, [filters]);
 
   useEffect(() => {
+    const cachedHistory = readCachedJson(UPLOAD_HISTORY_CACHE_KEY, []);
+    if (cachedHistory.length) {
+      setUploadHistory(hydrateUploadHistory(cachedHistory));
+    }
     fetchUploadHistory();
   }, [operationMatcher]);
 
   useEffect(() => () => {
     Object.values(uploadSaveTimersRef.current).forEach((timer) => clearTimeout(timer));
   }, []);
+
+  useEffect(() => {
+    writeCachedJson(
+      UPLOAD_HISTORY_CACHE_KEY,
+      uploadHistory.map(({ rows, lineRemarks, hasFullDetails, ...upload }) => upload),
+    );
+  }, [uploadHistory]);
 
   const visibleUploads = useMemo(() => (
     uploadHistory.filter((item) => {
@@ -299,8 +344,9 @@ export default function AuditListPage() {
 
   const selectedImport = useMemo(() => visibleUploads[0] || null, [visibleUploads]);
   const selectedImportDetails = selectedImport
-    ? uploadDetailsById[selectedImport.id] || (selectedImport.rows ? selectedImport : null)
+    ? uploadDetailsById[selectedImport.id] || (selectedImport.hasFullDetails ? selectedImport : null)
     : null;
+  const activeUpload = selectedImportDetails || (selectedImport?.hasFullDetails ? selectedImport : null);
 
   useEffect(() => {
     setActiveLine('All');
@@ -311,17 +357,30 @@ export default function AuditListPage() {
   }, [selectedImport?.id]);
 
   useEffect(() => {
-    if (!selectedImport?.id || uploadDetailsById[selectedImport.id] || selectedImport.rows) return;
+    if (!selectedImport?.id || uploadDetailsById[selectedImport.id] || selectedImport.hasFullDetails) return;
 
-    setUploadDetailsLoading(true);
+    const cachedUpload = readCachedJson(uploadDetailCacheKey(selectedImport.id), null);
+    if (cachedUpload) {
+      const [hydrated] = hydrateUploadHistory([cachedUpload]);
+      setUploadDetailsById((current) => ({ ...current, [hydrated.id]: hydrated }));
+      setUploadDetailErrors((current) => ({ ...current, [hydrated.id]: false }));
+    } else {
+      setUploadDetailsLoading(true);
+    }
+
     operatorUploadsAPI.getOne(selectedImport.id)
       .then(({ data }) => {
         const [hydrated] = hydrateUploadHistory([data]);
         setUploadDetailsById((current) => ({ ...current, [hydrated.id]: hydrated }));
+        setUploadDetailErrors((current) => ({ ...current, [hydrated.id]: false }));
+        writeCachedJson(uploadDetailCacheKey(hydrated.id), data);
       })
-      .catch(() => toast.error('Failed to load uploaded sheet details'))
+      .catch(() => {
+        setUploadDetailErrors((current) => ({ ...current, [selectedImport.id]: true }));
+        toast.error('Failed to load uploaded sheet details');
+      })
       .finally(() => setUploadDetailsLoading(false));
-  }, [selectedImport?.id, uploadDetailsById]);
+  }, [selectedImport?.id, selectedImport?.hasFullDetails, uploadDetailsById]);
 
   const handleDelete = async (id) => {
     if (!window.confirm('Delete this audit?')) return;
@@ -379,6 +438,7 @@ export default function AuditListPage() {
       const [hydrated] = hydrateUploadHistory([data]);
       setUploadHistory((current) => [summarizeUpload(hydrated), ...current]);
       setUploadDetailsById((current) => ({ ...current, [hydrated.id]: hydrated }));
+      writeCachedJson(uploadDetailCacheKey(hydrated.id), data);
       setSelectedUploadDate('');
       setSelectedWeekKey('');
       toast.success(`Imported ${rows.length} operator rows`);
@@ -410,6 +470,7 @@ export default function AuditListPage() {
           delete next[selectedImport.id];
           return next;
         });
+        window.localStorage.removeItem(uploadDetailCacheKey(selectedImport.id));
         toast.success('Selected uploaded sheet removed');
       })
       .catch(() => toast.error('Failed to remove selected sheet'));
@@ -421,10 +482,12 @@ export default function AuditListPage() {
     uploadPendingPayloadsRef.current = {};
     operatorUploadsAPI.clearAll()
       .then(() => {
+        uploadHistory.forEach((upload) => window.localStorage.removeItem(uploadDetailCacheKey(upload.id)));
         setUploadHistory([]);
         setUploadDetailsById({});
         setSelectedUploadDate('');
         setSelectedWeekKey('');
+        window.localStorage.removeItem(UPLOAD_HISTORY_CACHE_KEY);
         toast.success('All uploaded sheets removed');
       })
       .catch(() => toast.error('Failed to remove uploaded sheets'));
@@ -457,39 +520,51 @@ export default function AuditListPage() {
   };
 
   const updateUploadHistoryRows = (uploadId, rowId, updates) => {
-    const currentUpload = uploadDetailsById[uploadId];
-    if (!currentUpload) return;
+    let updatedUpload = null;
 
-    const updatedUpload = {
-      ...currentUpload,
-      rows: (currentUpload.rows || []).map((row) => (
-        row.id === rowId ? { ...row, ...updates } : row
-      )),
-    };
+    setUploadDetailsById((current) => {
+      const currentUpload = current[uploadId];
+      if (!currentUpload) return current;
 
-    setUploadDetailsById((current) => ({ ...current, [uploadId]: updatedUpload }));
+      updatedUpload = {
+        ...currentUpload,
+        rows: (currentUpload.rows || []).map((row) => (
+          row.id === rowId ? { ...row, ...updates } : row
+        )),
+      };
+
+      return { ...current, [uploadId]: updatedUpload };
+    });
+
+    if (!updatedUpload) return;
+
     setUploadHistory((current) => current.map((upload) => (
       upload.id === uploadId ? summarizeUpload(updatedUpload) : upload
     )));
 
-    if (updatedUpload) {
-      scheduleUploadSave(updatedUpload);
-    }
+    writeCachedJson(uploadDetailCacheKey(uploadId), updatedUpload);
+    scheduleUploadSave(updatedUpload);
   };
 
   const updateUploadHistoryUpload = (uploadId, updates) => {
-    const currentUpload = uploadDetailsById[uploadId];
-    if (!currentUpload) return;
+    let updatedUpload = null;
 
-    const updatedUpload = { ...currentUpload, ...updates };
-    setUploadDetailsById((current) => ({ ...current, [uploadId]: updatedUpload }));
+    setUploadDetailsById((current) => {
+      const currentUpload = current[uploadId];
+      if (!currentUpload) return current;
+
+      updatedUpload = { ...currentUpload, ...updates };
+      return { ...current, [uploadId]: updatedUpload };
+    });
+
+    if (!updatedUpload) return;
+
     setUploadHistory((current) => current.map((upload) => (
       upload.id === uploadId ? summarizeUpload(updatedUpload) : upload
     )));
 
-    if (updatedUpload) {
-      scheduleUploadSave(updatedUpload);
-    }
+    writeCachedJson(uploadDetailCacheKey(uploadId), updatedUpload);
+    scheduleUploadSave(updatedUpload);
   };
 
   const handleSpeedTypeChange = (rowId, value) => {
@@ -540,9 +615,9 @@ export default function AuditListPage() {
   };
 
   const addLineRemark = () => {
-    if (!selectedImport) return;
+    if (!selectedImport || !activeUpload) return;
     const nextRemarks = [
-      ...(selectedImport.lineRemarks || []),
+      ...(activeUpload.lineRemarks || []),
       {
         id: `line-remark-${Date.now()}`,
         line: lineOptions[1] || '',
@@ -554,16 +629,16 @@ export default function AuditListPage() {
   };
 
   const updateLineRemark = (remarkId, updates) => {
-    if (!selectedImport) return;
-    const nextRemarks = (selectedImport.lineRemarks || []).map((entry) => (
+    if (!selectedImport || !activeUpload) return;
+    const nextRemarks = (activeUpload.lineRemarks || []).map((entry) => (
       entry.id === remarkId ? { ...entry, ...updates } : entry
     ));
     updateUploadHistoryUpload(selectedImport.id, { lineRemarks: nextRemarks });
   };
 
   const removeLineRemark = (remarkId) => {
-    if (!selectedImport) return;
-    const nextRemarks = (selectedImport.lineRemarks || []).filter((entry) => entry.id !== remarkId);
+    if (!selectedImport || !activeUpload) return;
+    const nextRemarks = (activeUpload.lineRemarks || []).filter((entry) => entry.id !== remarkId);
     updateUploadHistoryUpload(selectedImport.id, { lineRemarks: nextRemarks });
   };
 
@@ -738,6 +813,10 @@ export default function AuditListPage() {
 
                 {uploadDetailsLoading && !selectedImportDetails ? (
                   <div className="audit-upload-empty">Loading uploaded sheet...</div>
+                ) : uploadDetailErrors[selectedImport.id] && !selectedImportDetails ? (
+                  <div className="audit-upload-empty">
+                    Sheet summary is loaded, but full row details could not be loaded from the backend.
+                  </div>
                 ) : (
                   <>
                 <div className="audit-line-remarks-card">

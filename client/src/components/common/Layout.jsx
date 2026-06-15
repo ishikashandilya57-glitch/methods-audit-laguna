@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Outlet, NavLink, useNavigate } from 'react-router-dom';
+import { Outlet, NavLink } from 'react-router-dom';
 import { useAuth } from '../../hooks/useAuth';
 import './Layout.css';
 
@@ -12,7 +12,6 @@ const navItems = [
 
 export default function Layout() {
   const { user, logout } = useAuth();
-  const navigate = useNavigate();
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [isMobile, setIsMobile] = useState(false);
   const logoSrc = `${process.env.PUBLIC_URL || ''}/method360-logo.png`;
@@ -38,7 +37,6 @@ export default function Layout() {
 
   const handleLogout = () => {
     logout();
-    navigate('/login');
   };
 
   const handleNavClick = () => {
@@ -90,7 +88,7 @@ export default function Layout() {
               <span className="user-role">{user?.role}</span>
             </div>
           </div>
-          <button className="logout-btn" onClick={handleLogout}>Logout</button>
+          <button className="logout-btn" onClick={handleLogout}>Reset Session</button>
         </div>
       </aside>
 

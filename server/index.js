@@ -15,7 +15,12 @@ const authLimiter = rateLimit({
   message: 'Too many attempts, try again later',
 });
 
-const allowedOrigins = (process.env.CLIENT_URL || '')
+const defaultAllowedOrigins = [
+  'https://methods-audit-laguna.web.app',
+  'https://methods-audit-laguna.firebaseapp.com',
+];
+
+const allowedOrigins = (process.env.CLIENT_URL || defaultAllowedOrigins.join(','))
   .split(',')
   .map((origin) => origin.trim())
   .filter(Boolean);

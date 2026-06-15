@@ -3,10 +3,18 @@ import { authAPI } from '../services/api';
 
 const AuthContext = createContext(null);
 
+const FACTORY_USER = {
+  _id: 'factory-audit-user',
+  name: 'IE Department',
+  email: 'ie_dbr@laguna-clothing.com',
+  role: 'admin',
+  department: 'Industrial Engineering',
+};
+
 export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(() => {
     const stored = localStorage.getItem('user');
-    return stored ? JSON.parse(stored) : null;
+    return stored ? JSON.parse(stored) : FACTORY_USER;
   });
 
   const login = useCallback(async (email, password) => {
@@ -25,7 +33,7 @@ export const AuthProvider = ({ children }) => {
 
   const logout = useCallback(() => {
     localStorage.removeItem('user');
-    setUser(null);
+    setUser(FACTORY_USER);
   }, []);
 
   return (

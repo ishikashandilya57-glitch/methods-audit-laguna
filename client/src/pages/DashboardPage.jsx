@@ -411,8 +411,10 @@ export default function DashboardPage() {
     const buildStats = (rows) => {
       const total = rows.length;
       const yes = rows.filter((row) => row.auditDone === 'Yes').length;
-      const percent = total ? Math.round((yes / total) * 100) : 0;
-      return { total, yes, percent };
+      const no = rows.filter((row) => row.auditDone === 'No').length;
+      const completed = yes + no;
+      const percent = total ? Math.round((completed / total) * 100) : 0;
+      return { total, yes, no, completed, percent };
     };
 
     const rows = dashboardSections.map((section) => ({
@@ -587,7 +589,7 @@ export default function DashboardPage() {
           <div className="grid-2 dashboard-reason-grid">
             <div className="card dashboard-panel dashboard-panel-gradient">
               <div className="dashboard-panel-head">
-                <h3>Method Standardisation Status</h3>
+                <h3>Audit Completion Status</h3>
                 {dashboardLines.length ? <span className="dashboard-panel-chip">{dashboardLines.length} lines</span> : null}
               </div>
               {isDashboardDetailsPending ? (

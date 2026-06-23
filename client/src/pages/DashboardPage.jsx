@@ -26,6 +26,8 @@ const formatDate = (value) => {
   });
 };
 
+const getUploadActivityDate = (upload) => upload.updatedAt || upload.importedAt;
+
 const toInputDate = (value) => new Date(value).toISOString().slice(0, 10);
 
 const getWeekInfo = (value) => {
@@ -237,7 +239,7 @@ export default function DashboardPage() {
   }, []);
 
   const sortedUploads = useMemo(() => (
-    [...uploadHistory].sort((a, b) => new Date(b.importedAt) - new Date(a.importedAt))
+    [...uploadHistory].sort((a, b) => new Date(getUploadActivityDate(b)) - new Date(getUploadActivityDate(a)))
   ), [uploadHistory]);
 
   useEffect(() => {
@@ -246,7 +248,7 @@ export default function DashboardPage() {
 
   const periodOptions = useMemo(() => {
     if (periodMode === 'year') {
-      return [...new Set(sortedUploads.map((item) => new Date(item.importedAt).getFullYear().toString()))]
+      return [...new Set(sortedUploads.map((item) => new Date(getUploadActivityDate(item)).getFullYear().toString()))]
         .sort()
         .reverse()
         .map((value) => ({ value, label: value }));
@@ -254,7 +256,7 @@ export default function DashboardPage() {
 
     if (periodMode === 'month') {
       return [...new Set(sortedUploads.map((item) => {
-        const date = new Date(item.importedAt);
+        const date = new Date(getUploadActivityDate(item));
         return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
       }))]
         .sort()
@@ -264,14 +266,14 @@ export default function DashboardPage() {
 
     if (periodMode === 'week') {
       return [...new Map(sortedUploads.map((item) => {
-        const week = getWeekInfo(item.importedAt);
+        const week = getWeekInfo(getUploadActivityDate(item));
         return [week.key, week];
       })).values()]
         .sort((a, b) => b.key.localeCompare(a.key))
         .map((week) => ({ value: week.key, label: week.label }));
     }
 
-    return [...new Set(sortedUploads.map((item) => toInputDate(item.importedAt)))]
+    return [...new Set(sortedUploads.map((item) => toInputDate(getUploadActivityDate(item))))]
       .sort()
       .reverse()
       .map((value) => ({ value, label: formatDate(value) }));
@@ -281,13 +283,14 @@ export default function DashboardPage() {
     sortedUploads.filter((item) => {
       if (!periodValue) return true;
 
-      const date = new Date(item.importedAt);
+      const activityDate = getUploadActivityDate(item);
+      const date = new Date(activityDate);
       if (periodMode === 'year') return date.getFullYear().toString() === periodValue;
       if (periodMode === 'month') {
         return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}` === periodValue;
       }
-      if (periodMode === 'week') return getWeekInfo(item.importedAt).key === periodValue;
-      return toInputDate(item.importedAt) === periodValue;
+      if (periodMode === 'week') return getWeekInfo(activityDate).key === periodValue;
+      return toInputDate(activityDate) === periodValue;
     })
   ), [periodMode, periodValue, sortedUploads]);
 
@@ -477,7 +480,7 @@ export default function DashboardPage() {
 
   const isDashboardDetailsPending = filteredUploads.length > 0 && detailedUploads.length < filteredUploads.length;
 
-  const recentAudits = audits.slice(0, 5);
+  const recentAuditSheets = sortedUploads.slice(0, 5);
 
   const getCoverageTone = (item) => {
     const yesPercent = item.total ? item.yes / item.total : 0;
@@ -756,34 +759,36 @@ export default function DashboardPage() {
 
           <div className="card dashboard-panel dashboard-panel-violet">
             <div className="dashboard-panel-head">
-              <h3>Recent Audits</h3>
-              <span className="dashboard-panel-chip">{auditCounts.total} total</span>
+              <h3>Recent Audit Sheets</h3>
+              <span className="dashboard-panel-chip">{sortedUploads.length} total</span>
             </div>
-            {recentAudits.length ? (
+            {recentAuditSheets.length ? (
               <table className="table">
                 <thead>
                   <tr>
-                    <th>Audit #</th>
-                    <th>Area</th>
-                    <th>Date</th>
-                    <th>Status</th>
+                    <th>Sheet</th>
+                    <th>Activity Date</th>
+                    <th>Yes</th>
+                    <th>No</th>
+                    <th>Pending</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {recentAudits.map((audit) => (
-                    <tr key={audit._id}>
-                      <td><code>{audit.auditNumber}</code></td>
-                      <td>{audit.area}</td>
-                      <td>{formatDate(audit.scheduledDate)}</td>
-                      <td><span className={`badge badge-${audit.status.replace(' ', '-')}`}>{audit.status}</span></td>
+                  {recentAuditSheets.map((upload) => (
+                    <tr key={upload.id || upload._id}>
+                      <td><code>{upload.fileName}</code></td>
+                      <td>{formatDate(getUploadActivityDate(upload))}</td>
+                      <td><span className="dashboard-coverage-pill is-good">{upload.yesCount || 0}</span></td>
+                      <td><span className="dashboard-coverage-pill is-neutral">{upload.noCount || 0}</span></td>
+                      <td><span className="dashboard-coverage-pill is-mid">{upload.pendingCount || 0}</span></td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             ) : (
               <div className="dashboard-empty-state">
-                <strong>No audits yet</strong>
-                <span>Audit records will appear here once methods audits are created.</span>
+                <strong>No audit sheets yet</strong>
+                <span>Uploaded operator audit sheets will appear here.</span>
                 <div>
                   <Link to="/audits" className="btn btn-primary btn-sm">Go to Audits</Link>
                 </div>

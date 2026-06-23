@@ -39,6 +39,7 @@ const listUploads = async (req, res) => {
           createdAt: 1,
           updatedAt: 1,
           rowsSafe: { $ifNull: ['$rows', []] },
+          lineRemarksSafe: { $ifNull: ['$lineRemarks', []] },
           lineRemarksCount: { $size: { $ifNull: ['$lineRemarks', []] } },
         },
       },
@@ -51,7 +52,265 @@ const listUploads = async (req, res) => {
           createdAt: 1,
           updatedAt: 1,
           lineRemarksCount: 1,
+          lineRemarksSummary: {
+            $map: {
+              input: '$lineRemarksSafe',
+              as: 'remark',
+              in: {
+                id: '$$remark.id',
+                line: '$$remark.line',
+                remark: '$$remark.remark',
+                status: '$$remark.status',
+              },
+            },
+          },
           rowCount: { $size: '$rowsSafe' },
+          sectionSummary: {
+            $map: {
+              input: {
+                $setUnion: [
+                  [],
+                  {
+                    $filter: {
+                      input: {
+                        $map: {
+                          input: '$rowsSafe',
+                          as: 'row',
+                          in: '$$row.section',
+                        },
+                      },
+                      as: 'section',
+                      cond: {
+                        $and: [
+                          { $ne: ['$$section', null] },
+                          { $ne: ['$$section', ''] },
+                        ],
+                      },
+                    },
+                  },
+                ],
+              },
+              as: 'section',
+              in: {
+                section: '$$section',
+                total: {
+                  $size: {
+                    $filter: {
+                      input: '$rowsSafe',
+                      as: 'row',
+                      cond: { $eq: ['$$row.section', '$$section'] },
+                    },
+                  },
+                },
+                yes: {
+                  $size: {
+                    $filter: {
+                      input: '$rowsSafe',
+                      as: 'row',
+                      cond: {
+                        $and: [
+                          { $eq: ['$$row.section', '$$section'] },
+                          { $eq: ['$$row.auditDone', 'Yes'] },
+                        ],
+                      },
+                    },
+                  },
+                },
+                no: {
+                  $size: {
+                    $filter: {
+                      input: '$rowsSafe',
+                      as: 'row',
+                      cond: {
+                        $and: [
+                          { $eq: ['$$row.section', '$$section'] },
+                          { $eq: ['$$row.auditDone', 'No'] },
+                        ],
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+          lineSummary: {
+            $map: {
+              input: {
+                $setUnion: [
+                  [],
+                  {
+                    $filter: {
+                      input: {
+                        $map: {
+                          input: '$rowsSafe',
+                          as: 'row',
+                          in: '$$row.line',
+                        },
+                      },
+                      as: 'line',
+                      cond: {
+                        $and: [
+                          { $ne: ['$$line', null] },
+                          { $ne: ['$$line', ''] },
+                        ],
+                      },
+                    },
+                  },
+                ],
+              },
+              as: 'line',
+              in: {
+                line: '$$line',
+                total: {
+                  $size: {
+                    $filter: {
+                      input: '$rowsSafe',
+                      as: 'row',
+                      cond: { $eq: ['$$row.line', '$$line'] },
+                    },
+                  },
+                },
+              },
+            },
+          },
+          matrixSummary: {
+            $map: {
+              input: {
+                $setUnion: [
+                  [],
+                  {
+                    $filter: {
+                      input: {
+                        $map: {
+                          input: '$rowsSafe',
+                          as: 'row',
+                          in: {
+                            line: '$$row.line',
+                            section: '$$row.section',
+                          },
+                        },
+                      },
+                      as: 'pair',
+                      cond: {
+                        $and: [
+                          { $ne: ['$$pair.line', null] },
+                          { $ne: ['$$pair.line', ''] },
+                          { $ne: ['$$pair.section', null] },
+                          { $ne: ['$$pair.section', ''] },
+                        ],
+                      },
+                    },
+                  },
+                ],
+              },
+              as: 'pair',
+              in: {
+                line: '$$pair.line',
+                section: '$$pair.section',
+                total: {
+                  $size: {
+                    $filter: {
+                      input: '$rowsSafe',
+                      as: 'row',
+                      cond: {
+                        $and: [
+                          { $eq: ['$$row.line', '$$pair.line'] },
+                          { $eq: ['$$row.section', '$$pair.section'] },
+                        ],
+                      },
+                    },
+                  },
+                },
+                yes: {
+                  $size: {
+                    $filter: {
+                      input: '$rowsSafe',
+                      as: 'row',
+                      cond: {
+                        $and: [
+                          { $eq: ['$$row.line', '$$pair.line'] },
+                          { $eq: ['$$row.section', '$$pair.section'] },
+                          { $eq: ['$$row.auditDone', 'Yes'] },
+                        ],
+                      },
+                    },
+                  },
+                },
+                no: {
+                  $size: {
+                    $filter: {
+                      input: '$rowsSafe',
+                      as: 'row',
+                      cond: {
+                        $and: [
+                          { $eq: ['$$row.line', '$$pair.line'] },
+                          { $eq: ['$$row.section', '$$pair.section'] },
+                          { $eq: ['$$row.auditDone', 'No'] },
+                        ],
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+          reasonSummary: {
+            $map: {
+              input: {
+                $setUnion: [
+                  [],
+                  {
+                    $map: {
+                      input: {
+                        $filter: {
+                          input: '$rowsSafe',
+                          as: 'row',
+                          cond: { $eq: ['$$row.auditDone', 'No'] },
+                        },
+                      },
+                      as: 'row',
+                      in: {
+                        $cond: [
+                          { $eq: ['$$row.auditReason', 'Other'] },
+                          { $ifNull: ['$$row.auditReasonOther', 'Other'] },
+                          { $ifNull: ['$$row.auditReason', 'No reason selected'] },
+                        ],
+                      },
+                    },
+                  },
+                ],
+              },
+              as: 'reason',
+              in: {
+                label: '$$reason',
+                count: {
+                  $size: {
+                    $filter: {
+                      input: '$rowsSafe',
+                      as: 'row',
+                      cond: {
+                        $and: [
+                          { $eq: ['$$row.auditDone', 'No'] },
+                          {
+                            $eq: [
+                              {
+                                $cond: [
+                                  { $eq: ['$$row.auditReason', 'Other'] },
+                                  { $ifNull: ['$$row.auditReasonOther', 'Other'] },
+                                  { $ifNull: ['$$row.auditReason', 'No reason selected'] },
+                                ],
+                              },
+                              '$$reason',
+                            ],
+                          },
+                        ],
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
           lineCount: {
             $size: {
               $setUnion: [

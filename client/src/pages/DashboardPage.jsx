@@ -6,7 +6,6 @@ import { createInitialRoadmapRows, roadmapMonthKeys } from '../data/roadmapData'
 import { Link } from 'react-router-dom';
 
 const UPLOAD_HISTORY_CACHE_KEY = 'method360-upload-history-cache-v1';
-const uploadDetailCacheKey = (id) => `method360-upload-detail-cache-v1:${id}`;
 
 const readCachedJson = (key, fallback) => {
   try {
@@ -211,12 +210,10 @@ export default function DashboardPage() {
   const { user } = useAuth();
   const [audits, setAudits] = useState([]);
   const [uploadHistory, setUploadHistory] = useState([]);
-  const [uploadDetailsById, setUploadDetailsById] = useState({});
   const [roadmapRows, setRoadmapRows] = useState([]);
   const [periodMode, setPeriodMode] = useState('year');
   const [periodValue, setPeriodValue] = useState('');
   const [loading, setLoading] = useState(true);
-  const [uploadDetailsLoading, setUploadDetailsLoading] = useState(false);
 
   useEffect(() => {
     const cachedUploads = readCachedJson(UPLOAD_HISTORY_CACHE_KEY, []);
@@ -296,66 +293,6 @@ export default function DashboardPage() {
 
   const latestUpload = filteredUploads[0] || null;
 
-  useEffect(() => {
-    const pendingIds = filteredUploads
-      .map((upload) => upload.id || upload._id)
-      .filter((id) => id && !uploadDetailsById[id]);
-
-    if (!pendingIds.length) return;
-
-    let cancelled = false;
-    setUploadDetailsLoading(true);
-
-    const cachedEntries = pendingIds
-      .map((id) => [id, readCachedJson(uploadDetailCacheKey(id), null)])
-      .filter(([, upload]) => upload);
-
-    if (cachedEntries.length) {
-      setUploadDetailsById((current) => ({
-        ...current,
-        ...Object.fromEntries(cachedEntries),
-      }));
-    }
-
-    Promise.all(
-      pendingIds.map((id) => operatorUploadsAPI.getOne(id).then(({ data }) => [id, data]))
-    )
-      .then((results) => {
-        if (cancelled) return;
-        results.forEach(([id, data]) => {
-          try {
-            window.localStorage.setItem(uploadDetailCacheKey(id), JSON.stringify(data));
-          } catch (error) {
-            // Ignore cache write failures.
-          }
-        });
-        setUploadDetailsById((current) => ({
-          ...current,
-          ...Object.fromEntries(results),
-        }));
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setUploadDetailsById((current) => ({ ...current }));
-        }
-      })
-      .finally(() => {
-        if (!cancelled) setUploadDetailsLoading(false);
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [filteredUploads, uploadDetailsById]);
-
-  const detailedUploads = useMemo(() => (
-    filteredUploads
-      .map((upload) => uploadDetailsById[upload.id || upload._id] || null)
-      .filter(Boolean)
-  ), [filteredUploads, uploadDetailsById]);
-
-  const dashboardRows = detailedUploads.flatMap((item) => item.rows || []);
-
   const auditCounts = useMemo(() => ({
     total: audits.length,
     scheduled: audits.filter((audit) => audit.status === 'scheduled').length,
@@ -365,53 +302,66 @@ export default function DashboardPage() {
 
   const auditSheetCounts = useMemo(() => ({
     total: filteredUploads.length,
-    rows: dashboardRows.length,
-  }), [dashboardRows.length, filteredUploads.length]);
+    rows: filteredUploads.reduce((sum, upload) => sum + (upload.rowCount || 0), 0),
+  }), [filteredUploads]);
 
   const sectionSummary = useMemo(() => (
-    Object.values(dashboardRows.reduce((summary, row) => {
-      const key = row.section || 'Unassigned';
+    Object.values(filteredUploads.reduce((summary, upload) => {
+      (upload.sectionSummary || []).forEach((item) => {
+        const key = item.section || 'Unassigned';
       if (!summary[key]) {
         summary[key] = { section: key, total: 0, yes: 0, no: 0, pending: 0 };
       }
 
-      summary[key].total += 1;
-      if (row.auditDone === 'Yes') summary[key].yes += 1;
-      else if (row.auditDone === 'No') summary[key].no += 1;
-      else summary[key].pending += 1;
+        summary[key].total += item.total || 0;
+        summary[key].yes += item.yes || 0;
+        summary[key].no += item.no || 0;
+        summary[key].pending += Math.max((item.total || 0) - (item.yes || 0) - (item.no || 0), 0);
+      });
 
       return summary;
     }, {})).sort((a, b) => b.total - a.total)
-  ), [dashboardRows]);
+  ), [filteredUploads]);
 
   const lineSummary = useMemo(() => (
-    Object.values(dashboardRows.reduce((summary, row) => {
-      const key = row.line || 'Unassigned';
+    Object.values(filteredUploads.reduce((summary, upload) => {
+      (upload.lineSummary || []).forEach((item) => {
+        const key = item.line || 'Unassigned';
       if (!summary[key]) {
         summary[key] = { line: key, total: 0 };
       }
 
-      summary[key].total += 1;
+        summary[key].total += item.total || 0;
+      });
       return summary;
     }, {})).sort((a, b) => b.total - a.total)
-  ), [dashboardRows]);
+  ), [filteredUploads]);
 
   const dashboardLines = useMemo(() => (
-    [...new Set(dashboardRows.map((row) => row.line).filter(Boolean))]
+    [...new Set(lineSummary.map((row) => row.line).filter(Boolean))]
       .sort((a, b) => parseLineOrder(a) - parseLineOrder(b) || a.localeCompare(b))
-  ), [dashboardRows]);
+  ), [lineSummary]);
 
   const dashboardSections = useMemo(() => {
-    const rowSections = new Set(dashboardRows.map((row) => row.section).filter(Boolean));
+    const rowSections = new Set(sectionSummary.map((row) => row.section).filter(Boolean));
     return operationSections.filter((section) => rowSections.has(section))
       .concat([...rowSections].filter((section) => !operationSections.includes(section)).sort());
-  }, [dashboardRows]);
+  }, [sectionSummary]);
 
   const statusMatrix = useMemo(() => {
-    const buildStats = (rows) => {
-      const total = rows.length;
-      const yes = rows.filter((row) => row.auditDone === 'Yes').length;
-      const no = rows.filter((row) => row.auditDone === 'No').length;
+    const buildStats = (line, section) => {
+      const stats = filteredUploads.reduce((summary, upload) => {
+        (upload.matrixSummary || [])
+          .filter((item) => item.line === line && (!section || item.section === section))
+          .forEach((item) => {
+            summary.total += item.total || 0;
+            summary.yes += item.yes || 0;
+            summary.no += item.no || 0;
+          });
+        return summary;
+      }, { total: 0, yes: 0, no: 0 });
+
+      const { total, yes, no } = stats;
       const completed = yes + no;
       const percent = total ? Math.round((completed / total) * 100) : 0;
       return { total, yes, no, completed, percent };
@@ -419,30 +369,23 @@ export default function DashboardPage() {
 
     const rows = dashboardSections.map((section) => ({
       section,
-      lineStats: dashboardLines.map((line) => buildStats(
-        dashboardRows.filter((row) => row.section === section && row.line === line)
-      )),
+      lineStats: dashboardLines.map((line) => buildStats(line, section)),
     }));
 
     const totalRow = {
       section: 'Total',
-      lineStats: dashboardLines.map((line) => buildStats(
-        dashboardRows.filter((row) => row.line === line)
-      )),
+      lineStats: dashboardLines.map((line) => buildStats(line)),
     };
 
     return { rows, totalRow };
-  }, [dashboardLines, dashboardSections, dashboardRows]);
+  }, [dashboardLines, dashboardSections, filteredUploads]);
 
   const reasonChartData = useMemo(() => {
-    const reasonCounts = dashboardRows.reduce((summary, row) => {
-      if (row.auditDone !== 'No') return summary;
-
-      const reason = row.auditReason === 'Other'
-        ? (row.auditReasonOther || 'Other')
-        : (row.auditReason || 'No reason selected');
-
-      summary[reason] = (summary[reason] || 0) + 1;
+    const reasonCounts = filteredUploads.reduce((summary, upload) => {
+      (upload.reasonSummary || []).forEach((item) => {
+        const label = item.label || 'No reason selected';
+        summary[label] = (summary[label] || 0) + (item.count || 0);
+      });
       return summary;
     }, {});
 
@@ -455,11 +398,11 @@ export default function DashboardPage() {
         count,
         color: palette[index % palette.length],
       }));
-  }, [dashboardRows]);
+  }, [filteredUploads]);
 
   const lineRemarksSummary = useMemo(() => {
-    const remarks = detailedUploads.flatMap((upload) => (
-      (upload.lineRemarks || [])
+    const remarks = filteredUploads.flatMap((upload) => (
+      (upload.lineRemarksSummary || [])
         .filter((item) => item.line || item.remark)
         .map((item) => ({
           id: `${upload.id || upload._id}-${item.id}`,
@@ -478,9 +421,7 @@ export default function DashboardPage() {
       linesCovered,
       remarks,
     };
-  }, [detailedUploads]);
-
-  const isDashboardDetailsPending = filteredUploads.length > 0 && detailedUploads.length < filteredUploads.length;
+  }, [filteredUploads]);
 
   const recentAuditSheets = sortedUploads.slice(0, 5);
 
@@ -592,9 +533,7 @@ export default function DashboardPage() {
                 <h3>Audit Completion Status</h3>
                 {dashboardLines.length ? <span className="dashboard-panel-chip">{dashboardLines.length} lines</span> : null}
               </div>
-              {isDashboardDetailsPending ? (
-                <p className="dashboard-empty-copy">Loading uploaded sheet details...</p>
-              ) : dashboardLines.length && dashboardSections.length ? (
+              {dashboardLines.length && dashboardSections.length ? (
                 <div className="dashboard-matrix-wrap">
                   <table className="table dashboard-matrix-table">
                     <thead>
@@ -657,9 +596,7 @@ export default function DashboardPage() {
                 <h3>Reason Analysis</h3>
                 {reasonChartData.length ? <span className="dashboard-panel-chip">{reasonChartData.length} reasons</span> : null}
               </div>
-              {isDashboardDetailsPending ? (
-                <p className="dashboard-empty-copy">Loading uploaded sheet details...</p>
-              ) : reasonChartData.length ? (
+              {reasonChartData.length ? (
                 <div className="dashboard-reason-panel">
                   <DashboardPieChart data={reasonChartData} />
                   <table className="table">
@@ -692,9 +629,7 @@ export default function DashboardPage() {
                 <span className="dashboard-panel-chip">{lineRemarksSummary.total} remarks</span>
               ) : null}
             </div>
-            {isDashboardDetailsPending ? (
-              <p className="dashboard-empty-copy">Loading uploaded sheet details...</p>
-            ) : lineRemarksSummary.total ? (
+            {lineRemarksSummary.total ? (
               <>
                 <div className="dashboard-remarks-summary">
                   <span className="dashboard-panel-chip">{lineRemarksSummary.linesCovered} lines covered</span>
@@ -729,9 +664,7 @@ export default function DashboardPage() {
               <h3>Section Coverage</h3>
               {sectionSummary.length ? <span className="dashboard-panel-chip">{sectionSummary.length} sections</span> : null}
             </div>
-            {isDashboardDetailsPending ? (
-              <p className="dashboard-empty-copy">Loading uploaded sheet details...</p>
-            ) : sectionSummary.length ? (
+            {sectionSummary.length ? (
               <table className="table">
                 <thead>
                   <tr>

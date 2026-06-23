@@ -164,6 +164,7 @@ export default function AuditListPage() {
   const [previewImage, setPreviewImage] = useState(null);
   const [filters, setFilters] = useState({ status: '', area: '' });
   const fileInputRef = useRef(null);
+  const uploadDetailsRef = useRef({});
   const rowSaveTimersRef = useRef({});
   const rowPendingPayloadsRef = useRef({});
   const lineRemarkSaveTimersRef = useRef({});
@@ -371,6 +372,10 @@ export default function AuditListPage() {
   }, []);
 
   useEffect(() => {
+    uploadDetailsRef.current = uploadDetailsById;
+  }, [uploadDetailsById]);
+
+  useEffect(() => {
     writeCachedJson(
       UPLOAD_HISTORY_CACHE_KEY,
       uploadHistory.map(({ rows, lineRemarks, hasFullDetails, ...upload }) => upload),
@@ -414,7 +419,11 @@ export default function AuditListPage() {
     operatorUploadsAPI.getOne(selectedImport.id)
       .then(({ data }) => {
         const [hydrated] = hydrateUploadHistory([data]);
-        setUploadDetailsById((current) => ({ ...current, [hydrated.id]: hydrated }));
+        setUploadDetailsById((current) => {
+          const next = { ...current, [hydrated.id]: hydrated };
+          uploadDetailsRef.current = next;
+          return next;
+        });
         setUploadDetailErrors((current) => ({ ...current, [hydrated.id]: false }));
         writeCachedJson(uploadDetailCacheKey(hydrated.id), data);
       })
@@ -480,7 +489,11 @@ export default function AuditListPage() {
       const { data } = await operatorUploadsAPI.create(upload);
       const [hydrated] = hydrateUploadHistory([data]);
       setUploadHistory((current) => [summarizeUpload(hydrated), ...current]);
-      setUploadDetailsById((current) => ({ ...current, [hydrated.id]: hydrated }));
+      setUploadDetailsById((current) => {
+        const next = { ...current, [hydrated.id]: hydrated };
+        uploadDetailsRef.current = next;
+        return next;
+      });
       writeCachedJson(uploadDetailCacheKey(hydrated.id), data);
       setSelectedUploadDate('');
       setSelectedWeekKey('');
@@ -518,6 +531,7 @@ export default function AuditListPage() {
         setUploadDetailsById((current) => {
           const next = { ...current };
           delete next[selectedImport.id];
+          uploadDetailsRef.current = next;
           return next;
         });
         window.localStorage.removeItem(uploadDetailCacheKey(selectedImport.id));
@@ -537,6 +551,7 @@ export default function AuditListPage() {
       .then(() => {
         uploadHistory.forEach((upload) => window.localStorage.removeItem(uploadDetailCacheKey(upload.id)));
         setUploadHistory([]);
+        uploadDetailsRef.current = {};
         setUploadDetailsById({});
         setSelectedUploadDate('');
         setSelectedWeekKey('');
@@ -550,7 +565,10 @@ export default function AuditListPage() {
     if (!uploadId || !rowId) return;
     const timerKey = `${uploadId}::${rowId}`;
 
-    rowPendingPayloadsRef.current[timerKey] = updates;
+    rowPendingPayloadsRef.current[timerKey] = {
+      ...(rowPendingPayloadsRef.current[timerKey] || {}),
+      ...updates,
+    };
     setSavingUploads((current) => ({ ...current, [uploadId]: true }));
 
     if (rowSaveTimersRef.current[timerKey]) {
@@ -612,23 +630,18 @@ export default function AuditListPage() {
   };
 
   const updateUploadHistoryRows = (uploadId, rowId, updates) => {
-    let updatedUpload = null;
+    const currentUpload = uploadDetailsRef.current[uploadId];
+    if (!currentUpload) return;
 
-    setUploadDetailsById((current) => {
-      const currentUpload = current[uploadId];
-      if (!currentUpload) return current;
-
-      updatedUpload = {
-        ...currentUpload,
-        rows: (currentUpload.rows || []).map((row) => (
-          row.id === rowId ? { ...row, ...updates } : row
-        )),
-      };
-
-      return { ...current, [uploadId]: updatedUpload };
-    });
-
-    if (!updatedUpload) return;
+    const updatedUpload = {
+      ...currentUpload,
+      rows: (currentUpload.rows || []).map((row) => (
+        row.id === rowId ? { ...row, ...updates } : row
+      )),
+    };
+    const nextDetails = { ...uploadDetailsRef.current, [uploadId]: updatedUpload };
+    uploadDetailsRef.current = nextDetails;
+    setUploadDetailsById(nextDetails);
 
     setUploadHistory((current) => current.map((upload) => (
       upload.id === uploadId ? summarizeUpload(updatedUpload) : upload
@@ -639,17 +652,13 @@ export default function AuditListPage() {
   };
 
   const updateUploadHistoryUpload = (uploadId, updates) => {
-    let updatedUpload = null;
+    const currentUpload = uploadDetailsRef.current[uploadId];
+    if (!currentUpload) return;
 
-    setUploadDetailsById((current) => {
-      const currentUpload = current[uploadId];
-      if (!currentUpload) return current;
-
-      updatedUpload = { ...currentUpload, ...updates };
-      return { ...current, [uploadId]: updatedUpload };
-    });
-
-    if (!updatedUpload) return;
+    const updatedUpload = { ...currentUpload, ...updates };
+    const nextDetails = { ...uploadDetailsRef.current, [uploadId]: updatedUpload };
+    uploadDetailsRef.current = nextDetails;
+    setUploadDetailsById(nextDetails);
 
     setUploadHistory((current) => current.map((upload) => (
       upload.id === uploadId ? summarizeUpload(updatedUpload) : upload
@@ -759,9 +768,17 @@ export default function AuditListPage() {
   const noAuditRows = operatorRows.filter((row) => row.auditDone === 'No').length;
   const pendingAuditRows = operatorRows.filter((row) => !row.auditDone).length;
   const lineRemarks = selectedImportDetails?.lineRemarks || [];
+  const isSavingSelectedUpload = Boolean(selectedImport && savingUploads[selectedImport.id]);
 
   return (
     <div className="audit-page">
+      {isSavingSelectedUpload ? (
+        <div className="audit-saving-overlay" role="status" aria-live="polite">
+          <span className="audit-saving-spinner" />
+          <span>Saving changes...</span>
+        </div>
+      ) : null}
+
       <div className="page-header">
         <h1 className="page-title">Audits</h1>
       </div>
@@ -832,9 +849,6 @@ export default function AuditListPage() {
                 <span className="audit-summary-chip audit-summary-chip-success">{selectedImport.yesCount || 0} yes</span>
                 <span className="audit-summary-chip audit-summary-chip-danger">{selectedImport.noCount || 0} no</span>
                 <span className="audit-summary-chip">{selectedImport.pendingCount || 0} pending</span>
-                {savingUploads[selectedImport.id] ? (
-                  <span className="audit-summary-chip">Saving changes...</span>
-                ) : null}
               </div>
             </div>
 

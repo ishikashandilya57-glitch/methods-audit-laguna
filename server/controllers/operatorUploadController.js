@@ -151,21 +151,33 @@ const getUpload = async (req, res) => {
 
 const updateUploadRow = async (req, res) => {
   try {
-    const upload = await OperatorUpload.findById(req.params.id);
-    if (!upload) return res.status(404).json({ message: 'Upload not found' });
-
-    const row = upload.rows.find((item) => item.id === req.params.rowId);
-    if (!row) return res.status(404).json({ message: 'Upload row not found' });
-
     const allowedFields = ['speedType', 'picture', 'auditDone', 'auditReason', 'auditReasonOther'];
+    const setUpdates = {};
+
     allowedFields.forEach((field) => {
       if (Object.prototype.hasOwnProperty.call(req.body, field)) {
-        row[field] = req.body[field];
+        setUpdates[`rows.$.${field}`] = req.body[field];
       }
     });
 
-    upload.markModified('rows');
-    await upload.save();
+    if (!Object.keys(setUpdates).length) {
+      return res.status(400).json({ message: 'No valid row fields provided' });
+    }
+
+    const upload = await OperatorUpload.findOneAndUpdate(
+      { _id: req.params.id, 'rows.id': req.params.rowId },
+      { $set: setUpdates },
+      { new: true, runValidators: true }
+    );
+
+    if (!upload) {
+      const exists = await OperatorUpload.exists({ _id: req.params.id });
+      return res.status(404).json({
+        message: exists ? 'Upload row not found' : 'Upload not found',
+      });
+    }
+
+    const row = upload.rows.find((item) => item.id === req.params.rowId);
 
     res.json({ message: 'Row updated', row });
   } catch (error) {

@@ -813,6 +813,46 @@ body {
   gap: 20px;
 }
 
+.dashboard-reason-row.active {
+  background: #f8fafc;
+}
+
+.dashboard-reason-link {
+  border: 0;
+  background: transparent;
+  color: #1d4ed8;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+  padding: 0;
+  text-align: left;
+}
+
+.dashboard-reason-link:hover {
+  text-decoration: underline;
+}
+
+.dashboard-reason-drilldown {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid #e4e8f0;
+  border-radius: 8px;
+  background: #fbfcfe;
+}
+
+.dashboard-reason-drilldown-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  color: #314158;
+  font-size: 14px;
+}
+
+.dashboard-reason-detail-table {
+  margin: 0;
+}
+
 .dashboard-matrix-wrap {
   overflow-x: auto;
 }

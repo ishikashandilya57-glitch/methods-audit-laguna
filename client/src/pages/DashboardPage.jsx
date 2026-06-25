@@ -6,6 +6,7 @@ import { createInitialRoadmapRows, roadmapMonthKeys } from '../data/roadmapData'
 import { Link } from 'react-router-dom';
 
 const UPLOAD_HISTORY_CACHE_KEY = 'method360-upload-history-cache-v1';
+const uploadDetailCacheKey = (id) => `method360-upload-detail-cache-v1:${id}`;
 
 const readCachedJson = (key, fallback) => {
   try {
@@ -214,6 +215,9 @@ export default function DashboardPage() {
   const [periodMode, setPeriodMode] = useState('year');
   const [periodValue, setPeriodValue] = useState('');
   const [loading, setLoading] = useState(true);
+  const [selectedReason, setSelectedReason] = useState('');
+  const [reasonDetailsById, setReasonDetailsById] = useState({});
+  const [reasonDetailsLoading, setReasonDetailsLoading] = useState(false);
 
   useEffect(() => {
     const cachedUploads = readCachedJson(UPLOAD_HISTORY_CACHE_KEY, []);
@@ -292,6 +296,66 @@ export default function DashboardPage() {
   ), [periodMode, periodValue, sortedUploads]);
 
   const latestUpload = filteredUploads[0] || null;
+
+  useEffect(() => {
+    setSelectedReason('');
+  }, [periodMode, periodValue]);
+
+  useEffect(() => {
+    if (!selectedReason) return;
+
+    const pendingIds = filteredUploads
+      .map((upload) => upload.id || upload._id)
+      .filter((id) => id && !reasonDetailsById[id]);
+
+    if (!pendingIds.length) return;
+
+    let cancelled = false;
+    setReasonDetailsLoading(true);
+
+    const cachedEntries = pendingIds
+      .map((id) => [id, readCachedJson(uploadDetailCacheKey(id), null)])
+      .filter(([, upload]) => upload);
+
+    if (cachedEntries.length) {
+      setReasonDetailsById((current) => ({
+        ...current,
+        ...Object.fromEntries(cachedEntries),
+      }));
+    }
+
+    const missingIds = pendingIds.filter((id) => !cachedEntries.some(([cachedId]) => cachedId === id));
+
+    Promise.all(
+      missingIds.map((id) => operatorUploadsAPI.getOne(id).then(({ data }) => [id, data]))
+    )
+      .then((results) => {
+        if (cancelled) return;
+        results.forEach(([id, data]) => {
+          try {
+            window.localStorage.setItem(uploadDetailCacheKey(id), JSON.stringify(data));
+          } catch (error) {
+            // Ignore cache write failures.
+          }
+        });
+        setReasonDetailsById((current) => ({
+          ...current,
+          ...Object.fromEntries(results),
+        }));
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setReasonDetailsById((current) => ({ ...current }));
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setReasonDetailsLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [filteredUploads, reasonDetailsById, selectedReason]);
 
   const auditCounts = useMemo(() => ({
     total: audits.length,
@@ -399,6 +463,46 @@ export default function DashboardPage() {
         color: palette[index % palette.length],
       }));
   }, [filteredUploads]);
+
+  const selectedReasonDetails = useMemo(() => {
+    if (!selectedReason) {
+      return { lineRows: [], otherRows: [], loadedCount: 0, expectedCount: filteredUploads.length };
+    }
+
+    const detailUploads = filteredUploads
+      .map((upload) => reasonDetailsById[upload.id || upload._id])
+      .filter(Boolean);
+
+    const lineCounts = {};
+    const otherCounts = {};
+
+    detailUploads.forEach((upload) => {
+      (upload.rows || []).forEach((row) => {
+        if (row.auditDone !== 'No') return;
+        const reason = row.auditReason || 'No reason selected';
+        if (reason !== selectedReason) return;
+
+        const line = row.line || 'Unassigned';
+        lineCounts[line] = (lineCounts[line] || 0) + 1;
+
+        if (selectedReason === 'Other') {
+          const otherReason = row.auditReasonOther || 'Other';
+          otherCounts[otherReason] = (otherCounts[otherReason] || 0) + 1;
+        }
+      });
+    });
+
+    return {
+      lineRows: Object.entries(lineCounts)
+        .map(([line, count]) => ({ line, count }))
+        .sort((a, b) => parseLineOrder(a.line) - parseLineOrder(b.line) || a.line.localeCompare(b.line)),
+      otherRows: Object.entries(otherCounts)
+        .map(([reason, count]) => ({ reason, count }))
+        .sort((a, b) => b.count - a.count || a.reason.localeCompare(b.reason)),
+      loadedCount: detailUploads.length,
+      expectedCount: filteredUploads.length,
+    };
+  }, [filteredUploads, reasonDetailsById, selectedReason]);
 
   const lineRemarksSummary = useMemo(() => {
     const remarks = filteredUploads.flatMap((upload) => (
@@ -608,13 +712,74 @@ export default function DashboardPage() {
                     </thead>
                     <tbody>
                       {reasonChartData.map((item) => (
-                        <tr key={item.label}>
-                          <td>{item.label}</td>
+                        <tr
+                          key={item.label}
+                          className={selectedReason === item.label ? 'dashboard-reason-row active' : 'dashboard-reason-row'}
+                        >
+                          <td>
+                            <button
+                              type="button"
+                              className="dashboard-reason-link"
+                              onClick={() => setSelectedReason((current) => (current === item.label ? '' : item.label))}
+                            >
+                              {item.label}
+                            </button>
+                          </td>
                           <td>{item.count}</td>
                         </tr>
                       ))}
                     </tbody>
                   </table>
+                  {selectedReason ? (
+                    <div className="dashboard-reason-drilldown">
+                      <div className="dashboard-reason-drilldown-head">
+                        <strong>{selectedReason}</strong>
+                        <span>
+                          {reasonDetailsLoading || selectedReasonDetails.loadedCount < selectedReasonDetails.expectedCount
+                            ? 'Loading lines...'
+                            : `${selectedReasonDetails.lineRows.length} lines`}
+                        </span>
+                      </div>
+                      {selectedReasonDetails.lineRows.length ? (
+                        <table className="table dashboard-reason-detail-table">
+                          <thead>
+                            <tr>
+                              <th>Line</th>
+                              <th>Count</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {selectedReasonDetails.lineRows.map((row) => (
+                              <tr key={row.line}>
+                                <td>{row.line}</td>
+                                <td>{row.count}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      ) : (
+                        <p className="dashboard-empty-copy">Click is loading line details.</p>
+                      )}
+                      {selectedReason === 'Other' && selectedReasonDetails.otherRows.length ? (
+                        <table className="table dashboard-reason-detail-table">
+                          <thead>
+                            <tr>
+                              <th>Other Details</th>
+                              <th>Count</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {selectedReasonDetails.otherRows.map((row) => (
+                              <tr key={row.reason}>
+                                <td>{row.reason}</td>
+                                <td>{row.count}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      ) : null}
+                    </div>
+                  ) : null}
                 </div>
               ) : (
                 <p className="dashboard-empty-copy">Reason counts will appear after marking rows as `No`.</p>

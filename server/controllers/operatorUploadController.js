@@ -270,11 +270,7 @@ const listUploads = async (req, res) => {
                       },
                       as: 'row',
                       in: {
-                        $cond: [
-                          { $eq: ['$$row.auditReason', 'Other'] },
-                          { $ifNull: ['$$row.auditReasonOther', 'Other'] },
-                          { $ifNull: ['$$row.auditReason', 'No reason selected'] },
-                        ],
+                        $ifNull: ['$$row.auditReason', 'No reason selected'],
                       },
                     },
                   },
@@ -294,11 +290,7 @@ const listUploads = async (req, res) => {
                           {
                             $eq: [
                               {
-                                $cond: [
-                                  { $eq: ['$$row.auditReason', 'Other'] },
-                                  { $ifNull: ['$$row.auditReasonOther', 'Other'] },
-                                  { $ifNull: ['$$row.auditReason', 'No reason selected'] },
-                                ],
+                                $ifNull: ['$$row.auditReason', 'No reason selected'],
                               },
                               '$$reason',
                             ],
